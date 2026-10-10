@@ -1,2 +1,17 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Файлы, где CRLF ломает работу. Яркий случай — run.sh: шебанг
+# становится «#!/usr/bin/with-contenv bashio<CR>», ядро ищет интерпретатор
+# с именем «bashio\r», и аддон падает с
+# «exec: fatal: unable to exec bashio: No such file or directory».
+# eol=lf заставляет git держать LF и в репозитории, и в рабочей копии,
+# независимо от настроек autocrlf на машине разработчика.
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.py text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+.gitattributes text eol=lf

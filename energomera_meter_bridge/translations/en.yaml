@@ -1,0 +1,88 @@
+configuration:
+  meter_host:
+    name: "Meter TCP Gateway Host"
+    description: "IP address of the TCP gateway connected to the meter (e.g. 192.168.10.250)"
+  meter_port:
+    name: "Meter TCP Port"
+    description: "TCP port of the gateway (usually 1111)"
+  meter_address:
+    name: "Meter Network Address"
+    description: "Network address (IDPAS) of the meter. Factory default: 777777"
+  meter_password:
+    name: "Meter Password"
+    description: "Administrator password for the meter. Factory default: 777777. Not required for reading if passwordless selective reading is enabled in the meter"
+  read_mode:
+    name: "Read Mode"
+    description: "fast — out-of-session selective reading, no password needed, but not every meter supports it; session — exchange session in programming mode, as in 1.0.4; array — session in read mode, the meter sends the whole parameter array (cycle ≈21 s, needs poll_timeout 90–120 s and poll_interval from 90 s)"
+  use_address:
+    name: "Addressed Fast-Read Frame"
+    description: "Send read frames with the meter network address (/?)address!...). Enable it if the TCP gateway serves several meters on one bus"
+  emulate_parity:
+    name: "Emulate 7E1 Parity in 8N1"
+    description: "Set the 8th bit on bytes with odd parity. Keep enabled for gateways that emulate 7E1; disable it for transparent 8N1 gateways"
+  mqtt_host:
+    name: "MQTT Broker Host"
+    description: "Address of the MQTT broker (localhost if Mosquitto runs on the same host)"
+  mqtt_port:
+    name: "MQTT Broker Port"
+    description: "Port of the MQTT broker (default 1883, usually 8883 for TLS)"
+  mqtt_user:
+    name: "MQTT Username"
+    description: "Username for MQTT authentication"
+  mqtt_password:
+    name: "MQTT Password"
+    description: "Password for MQTT authentication"
+  mqtt_tls:
+    name: "Use MQTT TLS"
+    description: "Enable TLS encryption for the MQTT connection"
+  topic_prefix:
+    name: "MQTT Topic Prefix"
+    description: "Prefix for all MQTT topics published by this add-on (e.g. main_home_meter)"
+  node_id:
+    name: "Discovery Node ID"
+    description: "Identifier used in MQTT discovery topics. Leave empty to derive from meter address"
+  poll_interval:
+    name: "Fast Poll Interval (seconds)"
+    description: "How often to read fast parameters like power, voltage and current"
+  slow_poll_interval:
+    name: "Slow Poll Interval (seconds)"
+    description: "How often to read archives, daily consumption and monthly maximums"
+  poll_timeout:
+    name: "Meter Response Timeout (seconds)"
+    description: "Maximum time to wait for a response from the meter. In array mode this covers reading the whole array — use 90–120 s"
+  log_level:
+    name: "Log Level"
+    description: "info — normal log; debug — exchange frames in HEX, timings and response parsing for diagnostics; warning — problems only"
+  device_name:
+    name: "Device Name"
+    description: "Display name of the device in Home Assistant"
+  device_model:
+    name: "Device Model"
+    description: "Model of the meter (e.g. CE301)"
+  device_manufacturer:
+    name: "Device Manufacturer"
+    description: "Manufacturer of the meter (e.g. Energomera)"
+  device_sw_version:
+    name: "Firmware Version"
+    description: "Firmware version of the meter (e.g. v11)"
+  read_energy:
+    name: "Read Current Energy"
+    description: "Read cumulative active energy (ET0PE)"
+  read_power:
+    name: "Read Active Power"
+    description: "Read instantaneous active power (POWEP)"
+  read_voltage:
+    name: "Read Voltage per Phase"
+    description: "Read voltage for phases A, B and C (VOLTA)"
+  read_current:
+    name: "Read Current per Phase"
+    description: "Read current for phases A, B and C (CURRE)"
+  read_monthly_archive:
+    name: "Read Monthly Archive"
+    description: "Read energy accumulated at the end of the previous month (ENMPE)"
+  read_daily_archive:
+    name: "Read Daily Consumption"
+    description: "Read energy consumed over each of the last 7 days (EADPE)"
+  read_max_power:
+    name: "Read Monthly Maximum Power"
+    description: "Read maximum active power recorded during the current month (MAXPE)"

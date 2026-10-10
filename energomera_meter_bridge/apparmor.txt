@@ -1,0 +1,69 @@
+# Профиль AppArmor приложения Energomera Meter Bridge.
+#
+# Имя профиля — это slug приложения из config.yaml. Если файл лежит рядом с
+# config.yaml, Supervisor загружает его как основной профиль контейнера вместо
+# docker-default; за свой профиль Home Assistant начисляет приложению +1 балл
+# безопасности (с host_network: true получается 5 из 6).
+#
+# Основа — официальный шаблон из документации Home Assistant
+# (https://developers.home-assistant.io/docs/apps/presentation/#apparmor),
+# дополненный тем, что реально нужно этому приложению: интерпретатор Python с
+# библиотеками, разрешение имён (MQTT-брокер может задаваться именем), корневые
+# сертификаты для mqtt_tls и файлы дампов диагностики.
+#
+# Профиль намеренно не ужесточён до предела: правило `file,` из официального
+# шаблона оставляет доступ к файлам, ограничивая при этом монтирование, ptrace
+# и прочие опасные операции. Если понадобится ужесточить — см. процедуру
+# отладки по журналу аудита в DOCS.md («Безопасность»).
+
+#include <tunables/global>
+
+profile meter_bridge flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+  #include <abstractions/nameservice>
+
+  # --- Возможности процесса ---
+  file,
+  signal (send) set=(kill,term,int,hup,cont),
+
+  # --- s6-overlay: инициализация контейнера (в config.yaml init: false) ---
+  /init ix,
+  /bin/** ix,
+  /usr/bin/** ix,
+  /usr/lib/** r,
+  /run/{s6,s6-rc*,service}/** ix,
+  /package/** ix,
+  /command/** ix,
+  /etc/s6-overlay/** rwix,
+  /run/{,**} rwk,
+
+  # --- bashio: run.sh запускается через /bin/sh, bashio не вызывается,
+  #     но пути оставлены на случай запуска вручную из консоли контейнера ---
+  /usr/bin/bashio ix,
+  /usr/bin/with-contenv ix,
+  /usr/lib/bashio/** ix,
+
+  # --- Python и установленные зависимости (paho-mqtt, IEC61107) ---
+  /usr/bin/python3* ix,
+  /usr/lib/python3*/** r,
+  /usr/local/bin/** ix,
+  /usr/local/lib/** r,
+
+  # --- Терминал (журнал приложения) ---
+  /dev/tty rw,
+
+  # --- Корневые сертификаты для mqtt_tls: true ---
+  /etc/ssl/** r,
+  /etc/ca-certificates/** r,
+  /etc/pki/** r,
+
+  # --- Опции Supervisor и данные приложения ---
+  /data/** rw,
+
+  # --- Временные файлы ---
+  /tmp/** rwk,
+
+  # --- Дампы диагностики: --probe и --dump-array пишут их рядом со скриптом ---
+  /array_dump.log rw,
+  /probe_session_*.log rw,
+}

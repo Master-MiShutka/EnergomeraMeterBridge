@@ -1,0 +1,121 @@
+name: "Energomera Meter Bridge"
+version: "1.1.0"
+slug: "meter_bridge"
+description: "Читает данные с электросчётчика Энергомера CE301/CE303 через TCP-шлюз и публикует их в MQTT с автоматическим созданием сущностей в Home Assistant."
+# Страница приложения: ссылка «Перейдите на страницу приложения … для получения
+# дополнительной информации» в магазине ведёт сюда.
+url: "https://github.com/Master-MiShutka/EnergomeraMeterBridge"
+# Готовый образ из реестра контейнеров: Supervisor скачивает его вместо сборки на
+# устройстве. Собирается и публикуется workflow .github/workflows/builder.yaml —
+# multi-arch манифест для amd64 и aarch64 (тег = version этой версии).
+# Пакет в GHCR должен быть публичным, иначе установка не сможет скачать образ.
+image: "ghcr.io/master-mishutka/energomera-meter-bridge"
+arch:
+  - aarch64
+  - amd64
+startup: application
+boot: auto
+host_network: true
+init: false
+
+# ---------- НАСТРАИВАЕМЫЕ ПАРАМЕТРЫ ----------
+options:
+  # --- Счётчик и TCP-шлюз ---
+  meter_host: "192.168.10.250"
+  meter_port: 1111
+  meter_address: "777777"
+  # Пароль администратора счётчика (заводское значение 777777).
+  # Для чтения НЕ требуется, если в счётчике разрешено беспарольное
+  # выборочное чтение (CONDI, бит 0 = 0). Используется только при
+  # read_mode: session.
+  meter_password: "777777"
+  # Режим чтения:
+  #   fast    — быстрое выборочное чтение вне сеанса (п. 5.3.2 инструкции).
+  #             Пароль администратора не нужен вообще. Не все счётчики это
+  #             умеют: CE301 v11 такие кадры игнорирует.
+  #   session — сессия обмена в режиме программирования (поведение 1.0.4).
+  #             Требует снятия аппаратной блокировки кнопкой «ДСТП»
+  #             (CONDI, бит 8 = 0) либо разрешения программирования.
+  #   array   — сеанс обмена в режиме чтения: счётчик сам отдаёт весь массив
+  #             параметров, аддон читает его до последнего нужного параметра
+  #             (~21 с вместо ~42 с) и разбирает.
+  #             Работает там, где fast и session данные не дают.
+  #             Нужен poll_timeout 90–120 с и poll_interval от 90 с.
+  read_mode: "fast"
+  # Отправлять кадры чтения с адресом счётчика: /?<адрес>!<SOH>R1…
+  # Включите, если TCP-шлюз обслуживает несколько счётчиков на одной шине
+  # (безадресный кадр в таком случае игнорируется).
+  use_address: false
+  # Эмуляция 7E1 в 8N1: байты с нечётным числом единичных бит получают
+  # установленный 8-й бит. Выключайте для прозрачных 8N1-шлюзов.
+  emulate_parity: true
+
+  # --- MQTT ---
+  mqtt_host: "localhost"
+  mqtt_port: 1883
+  mqtt_user: ""
+  mqtt_password: ""
+  mqtt_tls: false
+  topic_prefix: "main_home_meter"
+  # Идентификатор устройства в discovery-топиках.
+  # Пусто → "meter_<адрес счётчика>".
+  node_id: ""
+
+  # --- Интервалы опроса ---
+  poll_interval: 60          # Интервал для "быстрых" данных (мощность, напряжение, ток), в секундах
+  slow_poll_interval: 3600   # Интервал для "медленных" данных (архивы, максимумы), в секундах
+  poll_timeout: 15
+
+  # --- Уровень журнала ---
+  # info    — обычный журнал: подключения, прочитанные значения, ошибки.
+  # debug   — дополнительно кадры обмена (HEX), тайминги, разбор ответов.
+  # warning — только проблемы.
+  log_level: "info"
+
+  # --- Описание счётчика ---
+  device_name: "Energomera CE301"
+  device_model: "CE301"
+  device_manufacturer: "Energomera"
+  device_sw_version: "v11"
+
+  # --- Флаги для чтения параметров ---
+  read_energy: true
+  read_power: true
+  read_voltage: true
+  read_current: true
+
+  # --- Флаги для чтения архивов ---
+  read_monthly_archive: true
+  read_daily_archive: true
+  read_max_power: true
+
+schema:
+  meter_host: str
+  meter_port: port
+  meter_address: str
+  meter_password: password
+  read_mode: list(fast|session|array)
+  use_address: bool
+  emulate_parity: bool
+  mqtt_host: str
+  mqtt_port: port
+  mqtt_user: str
+  mqtt_password: password
+  mqtt_tls: bool
+  topic_prefix: str
+  node_id: str
+  poll_interval: int(10,3600)
+  slow_poll_interval: int(300,86400)
+  poll_timeout: int(5,300)
+  log_level: list(debug|info|warning)
+  device_name: str
+  device_model: str
+  device_manufacturer: str
+  device_sw_version: str
+  read_energy: bool
+  read_power: bool
+  read_voltage: bool
+  read_current: bool
+  read_monthly_archive: bool
+  read_daily_archive: bool
+  read_max_power: bool
