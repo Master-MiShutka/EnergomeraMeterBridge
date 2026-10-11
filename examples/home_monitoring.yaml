@@ -1,0 +1,170 @@
+# ============================================================================
+#  Домашний мониторинг: качество воздуха и состояние серверов
+#
+#  Оповещения в Telegram (та же запись broadcast, что и в остальных файлах):
+#    * CO2 в доме у родителей выше 1000 ppm дольше 10 минут — «проветрить»;
+#    * CO2 вернулся к норме (ниже 700 ppm) — «воздух в норме»;
+#    * температура процессора любого сервера выше 80 °C;
+#    * заполнение диска сервера выше 85 %.
+#
+#  Проценты заполнения Glances не отдаёт — он публикует объём в ГБ. Поэтому
+#  процент считается от атрибута total, если он есть, иначе от ориентировочной
+#  ёмкости диска (её можно поправить в шаблоне ниже).
+#
+#  Датчики состояния (для панели):
+#    binary_sensor.pora_provetrit_dom_roditelei  — «пора проветрить»
+#    binary_sensor.peregrev_servera          — «перегрев сервера»
+#    binary_sensor.disk_servera_zapolnen         — «диск сервера заполнен»
+# ============================================================================
+
+template:
+  - binary_sensor:
+      - name: "Пора проветрить (дом родителей)"
+        unique_id: provetrit_dom_roditelei
+        icon: mdi:air-filter
+        state: >-
+          {{ states('sensor.esp8266_co2_meter_scd30_co2') | float(0) > 1000 }}
+
+      - name: "Перегрев сервера"
+        unique_id: server_overheat
+        icon: mdi:thermometer-alert
+        state: >-
+          {% set sensors = [
+               'sensor.mainserver_linux_thermal_zone_coretemp_package_id_0',
+               'sensor.mainserver_linux_thermal_zone_coretemp_core_0',
+               'sensor.mainserver_linux_thermal_zone_coretemp_core_1',
+               'sensor.proxmox_linux_thermal_zone_coretemp_package_id_0',
+               'sensor.proxmox_linux_thermal_zone_coretemp_core_0',
+               'sensor.proxmox_linux_thermal_zone_coretemp_core_1'] -%}
+          {{ sensors | map('states') | map('float', 0) | select('gt', 80) | list | count > 0 }}
+
+      - name: "Диск сервера заполнен"
+        unique_id: server_disk_full
+        icon: mdi:harddisk-alert
+        state: >-
+          {% set disks = {
+               'sensor.mainserver_linux_disk_usage_volume_volume1': 930,
+               'sensor.mainserver_linux_disk_usage_volume': 60,
+               'sensor.mainserver_linux_disk_usage_volume_home': 60,
+               'sensor.mainserver_linux_disk_usage_volume_tmp': 60,
+               'sensor.mainserver_linux_disk_usage_volume_var': 60,
+               'sensor.proxmox_linux_disk_usage_volume': 60,
+               'sensor.vps_server_1_linux_disk_usage_volume': 40} -%}
+          {% set ns = namespace(full=false) -%}
+          {% for entity, total in disks.items() -%}
+            {% set used = states(entity) | float(0) -%}
+            {% set real_total = state_attr(entity, 'total') | float(total) -%}
+            {% if real_total > 0 and used / real_total * 100 > 85 -%}
+              {% set ns.full = true -%}
+            {% endif -%}
+          {% endfor -%}
+          {{ ns.full }}
+
+automation:
+  # --- 1. CO2 выше 1000 ppm: пора проветрить ---------------------------------
+  - alias: "Воздух: пора проветрить (CO2)"
+    id: air_co2_ventilate
+    description: Сообщает, когда CO2 в доме родителей держится выше 1000 ppm
+    triggers:
+      - trigger: numeric_state
+        entity_id: sensor.esp8266_co2_meter_scd30_co2
+        above: 1000
+        for:
+          minutes: 10
+    conditions: []
+    actions:
+      - action: telegram_bot.send_message
+        data:
+          config_entry_id: 01KB8B55HJ6FA3YQCTHBAHF2W0
+          parse_mode: html
+          message: |-
+            🪟 <b>Пора проветрить</b>
+            CO2: <b>{{ states('sensor.esp8266_co2_meter_scd30_co2') | round(0) }} ppm</b> (норма до 1000)
+            Температура: {{ states('sensor.esp8266_co2_meter_scd30_temperature') | round(1) }} °C,
+            влажность: {{ states('sensor.esp8266_co2_meter_scd30_humidity') | round(0) }} %
+            Дом родителей. Достаточно открыть окна на 10–15 минут.
+    mode: single
+
+  # --- 2. CO2 вернулся к норме ----------------------------------------------
+  - alias: "Воздух: CO2 в норме"
+    id: air_co2_normal
+    description: Сообщает, когда проветривание помогло
+    triggers:
+      - trigger: numeric_state
+        entity_id: sensor.esp8266_co2_meter_scd30_co2
+        below: 700
+        for:
+          minutes: 5
+    conditions:
+      - condition: template
+        value_template: "{{ is_state('binary_sensor.pora_provetrit_dom_roditelei', 'off') }}"
+    actions:
+      - action: telegram_bot.send_message
+        data:
+          config_entry_id: 01KB8B55HJ6FA3YQCTHBAHF2W0
+          parse_mode: html
+          message: |-
+            ✅ <b>Воздух в норме</b>
+            CO2: {{ states('sensor.esp8266_co2_meter_scd30_co2') | round(0) }} ppm
+    mode: single
+
+  # --- 3. Перегрев сервера ---------------------------------------------------
+  - alias: "Серверы: перегрев"
+    id: servers_overheat
+    description: Сообщает, если температура процессора сервера выше 80 °C
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.peregrev_servera
+        to: "on"
+        for:
+          minutes: 5
+    conditions: []
+    actions:
+      - action: telegram_bot.send_message
+        data:
+          config_entry_id: 01KB8B55HJ6FA3YQCTHBAHF2W0
+          parse_mode: html
+          message: |-
+            🔥 <b>Перегрев сервера</b>
+            {% for entity in [
+                 'sensor.mainserver_linux_thermal_zone_coretemp_package_id_0',
+                 'sensor.mainserver_linux_thermal_zone_coretemp_core_0',
+                 'sensor.mainserver_linux_thermal_zone_coretemp_core_1',
+                 'sensor.proxmox_linux_thermal_zone_coretemp_package_id_0',
+                 'sensor.proxmox_linux_thermal_zone_coretemp_core_0',
+                 'sensor.proxmox_linux_thermal_zone_coretemp_core_1'] if states(entity) | float(0) > 80 -%}
+            • {{ state_attr(entity, 'friendly_name') }}: <b>{{ states(entity) }} °C</b>
+            {% endfor -%}
+            Проверьте охлаждение и нагрузку.
+    mode: single
+
+  # --- 4. Заполнение диска ---------------------------------------------------
+  - alias: "Серверы: диск заполнен"
+    id: servers_disk_full
+    description: Сообщает, когда диск сервера заполнен больше чем на 85 %
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.disk_servera_zapolnen
+        to: "on"
+        for:
+          minutes: 15
+    conditions: []
+    actions:
+      - action: telegram_bot.send_message
+        data:
+          config_entry_id: 01KB8B55HJ6FA3YQCTHBAHF2W0
+          parse_mode: html
+          message: |-
+            💾 <b>Диск сервера заполнен</b>
+            {% for entity, total in {
+                 'sensor.mainserver_linux_disk_usage_volume_volume1': 930,
+                 'sensor.mainserver_linux_disk_usage_volume': 60,
+                 'sensor.proxmox_linux_disk_usage_volume': 60,
+                 'sensor.vps_server_1_linux_disk_usage_volume': 40}.items() -%}
+            {% set used = states(entity) | float(0) -%}
+            {% set real = state_attr(entity, 'total') | float(total) -%}
+            {% if real > 0 and used / real * 100 > 85 -%}
+            • {{ state_attr(entity, 'friendly_name') }}: {{ used | round(1) }} из {{ real | round(0) }} ГБ ({{ (used / real * 100) | round(0) }} %)
+            {% endif -%}
+            {% endfor -%}
+    mode: single
