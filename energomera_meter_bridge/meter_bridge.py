@@ -58,6 +58,18 @@ ARRAY_NEEDED_VALUES = {
     "CURRE": 3,
 }
 
+# Сведения об устройстве, которые есть в массиве общего чтения. Лежат они в самом
+# конце потока (SNUMB — на 99,5 %, рядом IDPAS и MODEL), поэтому читаются не
+# каждый цикл, а раз в сутки; результат кэшируется в /data.
+DEVICE_INFO_NAMES = {
+    "SNUMB": "serial",     # заводской номер, например 00608763
+    "IDENT": "ident",      # модель и версия ПО, например CE301v11.7s4
+    "ID_FW": "firmware",   # прошивка и сборка, например CE301v11,137
+    "IDPAS": "address",    # сетевой адрес (IDPAS) счётчика
+}
+DEVICE_INFO_FILE = "/data/device_info.json"
+DEVICE_INFO_TTL = 86400  # секунд; раз в сутки один цикл читает массив до конца
+
 # Коды ошибок счётчика (инструкция по программированию, п. 5.3.3.5).
 METER_ERRORS = {
     "E05": "ошибка протокола",
@@ -881,6 +893,19 @@ def values_from_array(array: list) -> dict:
                  "№%d с энергией %s как последний завершённый месяц",
                  len(months), month_index, months[month_index][0])
 
+        # Запись на месяц раньше — это показание на начало предыдущего месяца.
+        # Разница даёт расход за прошлый месяц, поэтому сущности не приходится
+        # считать по статистике Home Assistant.
+        older = [i for i, m in enumerate(months) if m[0] < months[month_index][0]]
+        if older:
+            prev_index = max(older, key=lambda i: months[i][0])
+            values["ENMPE_PREV"] = months[prev_index]
+            log.debug("Предыдущий месяц: запись №%d с энергией %s",
+                      prev_index, months[prev_index][0])
+        else:
+            log.warning("В месячном архиве нет записи старше выбранной — расход "
+                        "за прошлый месяц посчитать не получится")
+
     maxima = records.get("MAXPE") or []
     if maxima and month_index is not None and month_index < len(maxima):
         values["MAXPE"] = maxima[month_index]
@@ -899,6 +924,43 @@ def array_needed_values(cfg: dict) -> dict:
     return needed
 
 
+def load_device_info() -> dict:
+    """Читает кэш сведений об устройстве (`/data/device_info.json`)."""
+    try:
+        with open(DEVICE_INFO_FILE, "r", encoding="utf-8-sig") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return data
+        log.warning("В %s ожидался объект JSON", DEVICE_INFO_FILE)
+    except FileNotFoundError:
+        log.debug("Кэш сведений об устройстве отсутствует: %s", DEVICE_INFO_FILE)
+    except Exception as e:
+        log.warning("Не удалось прочитать %s: %s", DEVICE_INFO_FILE, e)
+    return {}
+
+
+def save_device_info(info: dict) -> None:
+    """Сохраняет сведения об устройстве, чтобы не читать их каждый цикл."""
+    try:
+        with open(DEVICE_INFO_FILE, "w", encoding="utf-8") as f:
+            json.dump(info, f, ensure_ascii=False, indent=2)
+        log.debug("Сведения об устройстве сохранены в %s", DEVICE_INFO_FILE)
+    except Exception as e:
+        log.warning("Не удалось сохранить %s: %s", DEVICE_INFO_FILE, e)
+
+
+def device_info_from_array(array: list) -> dict:
+    """Выбирает из массива общего чтения сведения об устройстве."""
+    info = {}
+    for name, raw in array:
+        key = DEVICE_INFO_NAMES.get(name)
+        if key and key not in info:
+            value = str(raw).strip()
+            if value:
+                info[key] = value
+    return info
+
+
 def array_needs_satisfied(text: bytes, needed: dict) -> bool:
     """
     Собраны ли уже все нужные параметры. Дополнительно требуем, чтобы буфер
@@ -915,7 +977,7 @@ def array_needs_satisfied(text: bytes, needed: dict) -> bool:
     return all(counts.get(name, 0) >= count for name, count in needed.items())
 
 
-def read_array_stream(mymeter, needed: dict, timeout: float):
+def read_array_stream(mymeter, needed: dict, timeout: float, read_to_end: bool = False):
     """
     Читает массив общего чтения, но не обязательно до конца: как только собраны
     все нужные параметры, поток обрывается.
@@ -927,6 +989,10 @@ def read_array_stream(mymeter, needed: dict, timeout: float):
     без потери оперативных данных нельзя. Зато обрыв на 51 % вдвое сокращает
     цикл (≈21 с вместо ≈42 с) и отдаёт при этом все публикуемые параметры:
     остаток массива — служебные `GRF`, `CHS`, `LISTR`.
+
+    `read_to_end=True` — дочитать массив до терминатора целиком. Нужно раз в
+    сутки: сведения об устройстве (`SNUMB`, `IDPAS`, `MODEL`) лежат в хвосте
+    потока, куда обычный цикл не доходит.
 
     Возвращает (array, complete, bytes_read, elapsed).
     """
@@ -956,7 +1022,7 @@ def read_array_stream(mymeter, needed: dict, timeout: float):
         if ETX in buf:
             complete = True
             break
-        if array_needs_satisfied(bytes(buf), needed):
+        if not read_to_end and array_needs_satisfied(bytes(buf), needed):
             break
 
     elapsed = time.monotonic() - started
@@ -976,13 +1042,24 @@ def read_all_from_array(cfg: dict, mymeter) -> dict:
     Если счётчик отдал меньше записей архива, чем ожидается (например, у нового
     счётчика ещё нет 12 месяцев), условие «нужные параметры собраны» не
     выполнится и массив будет дочитан до конца — данные важнее скорости.
+
+    Раз в сутки (и при первом запуске) массив дочитывается до конца принудительно:
+    только так можно достать сведения об устройстве — заводской номер `SNUMB`,
+    адрес `IDPAS` и модель, которые лежат в хвосте потока.
     """
     needed = array_needed_values(cfg)
+    info = load_device_info()
+    age = time.time() - float(info.get("read_at") or 0)
+    read_to_end = (bool(cfg["meter"].get("read_device_info", True))
+                   and age >= DEVICE_INFO_TTL)
+    if read_to_end:
+        log.info("Сведения об устройстве нужно обновить (%.1f ч с прошлого раза) — "
+                 "массив будет дочитан до конца", age / 3600)
     log.debug("Ожидаем из массива: %s",
               ", ".join("%s×%d" % (n, c) for n, c in sorted(needed.items())))
 
     array, complete, size, elapsed = read_array_stream(
-        mymeter, needed, cfg["poll"]["timeout"])
+        mymeter, needed, cfg["poll"]["timeout"], read_to_end)
     mymeter.array_complete = complete
     log.info("Массив общего чтения: %d строк, %d байт за %.1f с (%s)",
              len(array), size, elapsed,
@@ -991,11 +1068,33 @@ def read_all_from_array(cfg: dict, mymeter) -> dict:
         log.warning("Массив общего чтения пуст — счётчик не отдал данные")
         return {}
 
+    if read_to_end and complete:
+        found = device_info_from_array(array)
+        if found.get("serial"):
+            found["read_at"] = time.time()
+            save_device_info(found)
+            info = found
+            log.info("Счётчик: заводской номер %s, модель/ПО %s, прошивка %s, "
+                     "адрес %s", found.get("serial"), found.get("ident"),
+                     found.get("firmware"), found.get("address"))
+        else:
+            log.warning("Массив дочитан до конца, но заводской номер (SNUMB) "
+                        "в нём не найден")
+
+    if info.get("serial") and cfg["device"].get("serial_number") != info["serial"]:
+        # Заводской номер попал в карточку устройства — discovery нужно
+        # опубликовать заново (это делает main после публикации значений).
+        cfg["device"]["serial_number"] = info["serial"]
+        cfg["_serial_changed"] = True
+
     names = {name for name, _ in array}
     log.debug("Нужные аддону параметры в массиве: %s",
               ", ".join(sorted(names & set(ARRAY_RECORD_SIZE))) or "нет")
 
     values = values_from_array(array)
+    if info.get("serial"):
+        # Диагностический сенсор «Serial number» публикуется как текст.
+        values["SNUMB"] = info["serial"]
     for key in sorted(values):
         log.info("Read %s = %r", key, values[key])
     return values
@@ -1095,6 +1194,14 @@ def publish_values(client: mqtt.Client, cfg: dict, values: dict):
                            val * scale, retain=True)
             published += 1
 
+        elif handler == "text":
+            # Значение публикуется как есть строкой: заводской номер счётчика
+            # начинается с нулей, числом его публиковать нельзя.
+            client.publish(f"{topic_prefix}/{topic_base}",
+                           str(raw[0] if isinstance(raw, (list, tuple)) else raw),
+                           retain=True)
+            published += 1
+
         elif handler == "phases":
             labels = [(lbl.lower(), lbl) for lbl in p.get("phases", [])]
             published += _publish_list(client, topic_prefix, topic_base, raw, labels, scale)
@@ -1174,6 +1281,9 @@ def publish_discovery(client: mqtt.Client, cfg: dict, params: list):
                 "device_class": p.get("device_class"),
                 "state_class": p.get("state_class"),
                 "unit_of_measurement": p.get("unit"),
+                # Диагностические сущности (например, заводской номер) Home
+                # Assistant показывает в отдельном разделе карточки устройства.
+                "entity_category": p.get("entity_category"),
                 # Доступность: аддон публикует online при подключении к брокеру
                 # и offline при сбое цикла опроса либо по Last Will.
                 "availability_topic": f"{topic_prefix}/status",
@@ -1181,6 +1291,9 @@ def publish_discovery(client: mqtt.Client, cfg: dict, params: list):
                 "payload_not_available": "offline",
                 "device": device_info,
             }
+            # Поля со значением None не отправляем: у текстовых сущностей нет
+            # ни класса, ни единицы измерения.
+            payload = {k: v for k, v in payload.items() if v is not None}
             client.publish(cfg_topic, json.dumps(payload), retain=True)
 
     log.info("Published discovery configs for %d parameter(s)", len(params))
@@ -1748,6 +1861,37 @@ def main():
                      "Assistant из накопленной энергии (utility_meter или "
                      "статистика).", ", ".join(daily))
 
+        if opts.get("read_device_info", True):
+            # Заводской номер счётчика из массива: диагностическая сущность плюс
+            # поле serial_number в карточке устройства. Из кэша он попадает в
+            # discovery сразу, без ожидания полного чтения массива.
+            cfg["parameters"].append({
+                "cmd": "SNUMB", "key": "SNUMB", "topic_base": "serial",
+                "slow": False, "handler": "text",
+                "name": "Serial number", "entity_category": "diagnostic",
+            })
+            cached = load_device_info()
+            if cached.get("serial"):
+                cfg["device"]["serial_number"] = cached["serial"]
+                log.info("Заводской номер из кэша: %s (модель/ПО %s, прошивка %s)",
+                         cached.get("serial"), cached.get("ident"),
+                         cached.get("firmware"))
+        else:
+            log.info("Опция read_device_info выключена: заводской номер счётчика "
+                     "не читается")
+
+        if opts.get("read_monthly_archive", True):
+            # Показание на начало предыдущего месяца — из того же кольцевого
+            # архива (запись на месяц раньше). Разница с ENMPE даёт расход за
+            # прошлый месяц без вычислений по статистике Home Assistant.
+            cfg["parameters"].append({
+                "cmd": "ENMPE", "key": "ENMPE_PREV", "topic_base": "enmpe_prev",
+                "slow": False, "handler": "archive_energy",
+                "name": "Energy at previous month start",
+                "device_class": "energy", "state_class": "total_increasing",
+                "unit": "kWh", "tariff_labels": ENERGY_TARIFF_LABELS,
+            })
+
     interval = opts.get("poll_interval", 60)
     slow_interval = opts.get("slow_poll_interval", 3600)
 
@@ -1789,6 +1933,14 @@ def main():
             mymeter = open_meter(cfg)
             values = read_all(cfg, mymeter, read_slow_data)
             publish_values(client, cfg, values)
+            if cfg.pop("_serial_changed", False):
+                log.info("Заводской номер счётчика получен (%s) — публикую "
+                         "discovery заново, чтобы он попал в карточку устройства",
+                         cfg["device"].get("serial_number"))
+                try:
+                    publish_discovery(client, cfg, cfg["parameters"])
+                except Exception as e:
+                    log.error("Не удалось опубликовать discovery: %s", e)
             if read_slow_data:
                 last_slow_poll = time.monotonic()
         except Exception as e:

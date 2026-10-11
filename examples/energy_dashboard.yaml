@@ -1,0 +1,224 @@
+# ============================================================================
+#  Дашборд «Электроэнергия» для счётчика Энергомера CE301
+#  (аддон Energomera Meter Bridge, режим read_mode: array)
+#
+#  Куда вставлять: Настройки → Панели → «+ Добавить панель» → «Новый дашборд
+#  из пустого» → открыть панель → ⋮ → «Редактировать панель» → ⋮ →
+#  «Raw-редактор» — заменить содержимое этим файлом.
+#
+#  Четыре вкладки (в Home Assistant вкладки — это представления дашборда):
+#  «Текущие сутки», «Текущий месяц», «Предыдущий месяц»,
+#  «Предыдущие 7 суток» (столбчатый график по суткам).
+#
+#  Предполагаемые сущности счётчика (проверьте в Настройки → Устройства и
+#  службы → Объекты и поправьте при необходимости):
+#    sensor.energomera_ce301_active_energy_t1 / _t2 / _t3 / _total
+#        накопленная энергия по тарифам (total_increasing, kWh) — ET0PE
+#    sensor.energomera_ce301_energy_at_month_start_t1 / _t2 / _t3 / _total
+#        показание на начало текущего месяца — ENMPE
+#    sensor.energomera_ce301_energy_at_previous_month_start_t1 / _t2 / _t3 / _total
+#        показание на начало предыдущего месяца — ENMPE_PREV
+#        (появляются после обновления аддона)
+#    sensor.energomera_ce301_active_power, _voltage_a/b/c, _current_a/b/c
+#        мгновенные значения — POWEP, VOLTA, CURRE
+#
+#  Вспомогательные сущности — из examples/energy_helpers.yaml:
+#    input_number.tariff_t1 / tariff_t2 / tariff_t3
+#    sensor.energy_today_t1 / _t2 / _t3 / _total
+#    sensor.energy_last_7_days_t1 / _t2 / _t3 / _total
+#
+#  Валюта затрат — из Настройки → Система → Общие → Валюта.
+#  Проверить шаблоны перед вставкой можно в «Инструменты разработчика» →
+#  «Шаблон», скопировав туда содержимое content любой карточки.
+# ============================================================================
+
+title: Электроэнергия
+views:
+  # ------------------------------------------------------------ текущие сутки
+  - title: Текущие сутки
+    path: today
+    icon: mdi:calendar-today
+    cards:
+      - type: markdown
+        content: |
+          {% set t = [('T1', 't1'), ('T2', 't2'), ('T3', 't3')] -%}
+          {% set ns = namespace(cost=0) -%}
+          ## Текущие сутки
+
+          ### {{ states('sensor.energy_today_total') | float(0) | round(2) }} кВт·ч
+
+          | Тариф | Расход, кВт·ч | Цена за кВт·ч | Стоимость |
+          |:--|--:|--:|--:|
+          {% for label, key in t -%}
+          {% set e = states('sensor.energy_today_' ~ key) | float(0) -%}
+          {% set p = states('input_number.tariff_' ~ key) | float(0) -%}
+          {% set ns.cost = ns.cost + e * p -%}
+          | {{ label }} | {{ e | round(2) }} | {{ p }} | {{ (e * p) | round(2) }} |
+          {% endfor -%}
+          | **Итого** | **{{ states('sensor.energy_today_total') | float(0) | round(2) }}** | | **{{ ns.cost | round(2) }}** |
+      - type: statistics-graph
+        title: Расход по часам
+        chart_type: bar
+        period: hour
+        days_to_show: 1
+        stat_types:
+          - change
+        entities:
+          - entity: sensor.energomera_ce301_active_energy_t1
+            name: T1
+          - entity: sensor.energomera_ce301_active_energy_t2
+            name: T2
+          - entity: sensor.energomera_ce301_active_energy_t3
+            name: T3
+      - type: entities
+        title: Мгновенные значения
+        entities:
+          - entity: sensor.energomera_ce301_active_power
+            name: Активная мощность
+          - entity: sensor.energomera_ce301_voltage_a
+            name: Напряжение A
+          - entity: sensor.energomera_ce301_voltage_b
+            name: Напряжение B
+          - entity: sensor.energomera_ce301_voltage_c
+            name: Напряжение C
+          - entity: sensor.energomera_ce301_current_a
+            name: Ток A
+          - entity: sensor.energomera_ce301_current_b
+            name: Ток B
+          - entity: sensor.energomera_ce301_current_c
+            name: Ток C
+
+  # ----------------------------------------------------------- текущий месяц
+  - title: Текущий месяц
+    path: month
+    icon: mdi:calendar-month
+    cards:
+      - type: markdown
+        content: |
+          {% set t = [('T1', 't1'), ('T2', 't2'), ('T3', 't3')] -%}
+          {% set cur = 'sensor.energomera_ce301_active_energy_' -%}
+          {% set beg = 'sensor.energomera_ce301_energy_at_month_start_' -%}
+          {% set total = states(cur ~ 'total') | float(0) - states(beg ~ 'total') | float(0) -%}
+          {% set ns = namespace(cost=0) -%}
+          ## Текущий месяц
+
+          ### {{ total | round(2) }} кВт·ч
+
+          Показание счётчика на 1-е число месяца: {{ states(beg ~ 'total') }} кВт·ч.
+
+          | Тариф | Расход, кВт·ч | Цена за кВт·ч | Стоимость |
+          |:--|--:|--:|--:|
+          {% for label, key in t -%}
+          {% set e = states(cur ~ key) | float(0) - states(beg ~ key) | float(0) -%}
+          {% set p = states('input_number.tariff_' ~ key) | float(0) -%}
+          {% set ns.cost = ns.cost + e * p -%}
+          | {{ label }} | {{ e | round(2) }} | {{ p }} | {{ (e * p) | round(2) }} |
+          {% endfor -%}
+          | **Итого** | **{{ total | round(2) }}** | | **{{ ns.cost | round(2) }}** |
+      - type: statistics-graph
+        title: Расход по суткам за текущий месяц
+        chart_type: bar
+        period: day
+        days_to_show: 31
+        stat_types:
+          - change
+        entities:
+          - entity: sensor.energomera_ce301_active_energy_t1
+            name: T1
+          - entity: sensor.energomera_ce301_active_energy_t2
+            name: T2
+          - entity: sensor.energomera_ce301_active_energy_t3
+            name: T3
+
+  # --------------------------------------------------------- предыдущий месяц
+  - title: Предыдущий месяц
+    path: prev-month
+    icon: mdi:calendar-arrow-left
+    cards:
+      - type: markdown
+        content: |
+          {% set t = [('T1', 't1'), ('T2', 't2'), ('T3', 't3')] -%}
+          {% set beg = 'sensor.energomera_ce301_energy_at_month_start_' -%}
+          {% set prev = 'sensor.energomera_ce301_energy_at_previous_month_start_' -%}
+          {% set total = states(beg ~ 'total') | float(0) - states(prev ~ 'total') | float(0) -%}
+          {% set ns = namespace(cost=0) -%}
+          ## Предыдущий месяц
+
+          ### {{ total | round(2) }} кВт·ч
+
+          Показания счётчика на границах месяца:
+          {{ states(prev ~ 'total') }} → {{ states(beg ~ 'total') }} кВт·ч.
+
+          | Тариф | Расход, кВт·ч | Цена за кВт·ч | Стоимость |
+          |:--|--:|--:|--:|
+          {% for label, key in t -%}
+          {% set e = states(beg ~ key) | float(0) - states(prev ~ key) | float(0) -%}
+          {% set p = states('input_number.tariff_' ~ key) | float(0) -%}
+          {% set ns.cost = ns.cost + e * p -%}
+          | {{ label }} | {{ e | round(2) }} | {{ p }} | {{ (e * p) | round(2) }} |
+          {% endfor -%}
+          | **Итого** | **{{ total | round(2) }}** | | **{{ ns.cost | round(2) }}** |
+      - type: statistics-graph
+        title: Расход по месяцам
+        chart_type: bar
+        period: month
+        days_to_show: 400
+        stat_types:
+          - change
+        entities:
+          - entity: sensor.energomera_ce301_active_energy_t1
+            name: T1
+          - entity: sensor.energomera_ce301_active_energy_t2
+            name: T2
+          - entity: sensor.energomera_ce301_active_energy_t3
+            name: T3
+
+  # -------------------------------------------------------- предыдущие 7 суток
+  - title: Предыдущие 7 суток
+    path: last-7-days
+    icon: mdi:chart-bar
+    cards:
+      - type: markdown
+        content: |
+          {% set t = [('T1', 't1'), ('T2', 't2'), ('T3', 't3')] -%}
+          {% set ns = namespace(cost=0) -%}
+          ## Предыдущие 7 суток
+
+          ### {{ states('sensor.energy_last_7_days_total') | float(0) | round(2) }} кВт·ч
+
+          | Тариф | Расход, кВт·ч | Цена за кВт·ч | Стоимость |
+          |:--|--:|--:|--:|
+          {% for label, key in t -%}
+          {% set e = states('sensor.energy_last_7_days_' ~ key) | float(0) -%}
+          {% set p = states('input_number.tariff_' ~ key) | float(0) -%}
+          {% set ns.cost = ns.cost + e * p -%}
+          | {{ label }} | {{ e | round(2) }} | {{ p }} | {{ (e * p) | round(2) }} |
+          {% endfor -%}
+          | **Итого** | **{{ states('sensor.energy_last_7_days_total') | float(0) | round(2) }}** | | **{{ ns.cost | round(2) }}** |
+
+          Столбцы — расход за сутки по тарифам; последний столбец — текущие,
+          ещё не завершённые сутки.
+      - type: statistics-graph
+        title: Расход по суткам за последние 7 суток
+        chart_type: bar
+        period: day
+        days_to_show: 7
+        stat_types:
+          - change
+        entities:
+          - entity: sensor.energomera_ce301_active_energy_t1
+            name: T1
+          - entity: sensor.energomera_ce301_active_energy_t2
+            name: T2
+          - entity: sensor.energomera_ce301_active_energy_t3
+            name: T3
+      - type: statistics-graph
+        title: Всего за сутки (все тарифы)
+        chart_type: bar
+        period: day
+        days_to_show: 7
+        stat_types:
+          - change
+        entities:
+          - entity: sensor.energomera_ce301_active_energy_total
+            name: Все тарифы

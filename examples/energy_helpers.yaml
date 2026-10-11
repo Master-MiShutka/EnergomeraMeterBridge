@@ -1,0 +1,93 @@
+# ============================================================================
+#  Вспомогательные сущности для дашборда «Электроэнергия»
+#  (счётчик Энергомера CE301 + аддон Energomera Meter Bridge)
+#
+#  Куда вставлять: в configuration.yaml (блоки можно копировать по отдельности)
+#  и перезапустить Home Assistant. То же самое можно создать мышкой:
+#  Настройки → Устройства и службы → Вспомогательные элементы.
+#
+#  ВАЖНО: перед вставкой проверьте идентификаторы сенсоров счётчика
+#  (Настройки → Устройства и службы → Объекты). Здесь предполагаются:
+#    sensor.energomera_ce301_active_energy_total / _t1 / _t2 / _t3
+# ============================================================================
+
+# --- Цены тарифов за кВт·ч -------------------------------------------------
+# Валюта берётся из Настройки → Система → Общие → Валюта.
+# Цену можно менять когда угодно: дашборд считает стоимость «на лету».
+input_number:
+  tariff_t1:
+    name: "Tariff T1 price"
+    min: 0
+    max: 1000
+    step: 0.0001
+    mode: box
+    icon: mdi:cash
+  tariff_t2:
+    name: "Tariff T2 price"
+    min: 0
+    max: 1000
+    step: 0.0001
+    mode: box
+    icon: mdi:cash
+  tariff_t3:
+    name: "Tariff T3 price"
+    min: 0
+    max: 1000
+    step: 0.0001
+    mode: box
+    icon: mdi:cash
+
+# --- Расход за текущие сутки ----------------------------------------------
+# Счётчики коммунальных услуг со сбросом в полночь по каждому тарифу.
+utility_meter:
+  energy_today_total:
+    source: sensor.energomera_ce301_active_energy_total
+    name: Energy today total
+    cycle: daily
+  energy_today_t1:
+    source: sensor.energomera_ce301_active_energy_t1
+    name: Energy today T1
+    cycle: daily
+  energy_today_t2:
+    source: sensor.energomera_ce301_active_energy_t2
+    name: Energy today T2
+    cycle: daily
+  energy_today_t3:
+    source: sensor.energomera_ce301_active_energy_t3
+    name: Energy today T3
+    cycle: daily
+
+# --- Расход за последние 7 суток ------------------------------------------
+# Скользящее окно по накопительным показаниям: state_characteristic: change
+# даёт разницу между первым и последним измерением в окне, то есть расход.
+# sampling_size задаёт, сколько измерений держать: при poll_interval: 120
+# это 720 измерений в сутки, с запасом берём 20000.
+sensor:
+  - platform: statistics
+    name: Energy last 7 days total
+    entity_id: sensor.energomera_ce301_active_energy_total
+    state_characteristic: change
+    max_age:
+      days: 7
+    sampling_size: 20000
+  - platform: statistics
+    name: Energy last 7 days T1
+    entity_id: sensor.energomera_ce301_active_energy_t1
+    state_characteristic: change
+    max_age:
+      days: 7
+    sampling_size: 20000
+  - platform: statistics
+    name: Energy last 7 days T2
+    entity_id: sensor.energomera_ce301_active_energy_t2
+    state_characteristic: change
+    max_age:
+      days: 7
+    sampling_size: 20000
+  - platform: statistics
+    name: Energy last 7 days T3
+    entity_id: sensor.energomera_ce301_active_energy_t3
+    state_characteristic: change
+    max_age:
+      days: 7
+    sampling_size: 20000

@@ -41,6 +41,7 @@ Home Assistant: достаточно поднять версию в
 ├── .gitignore
 ├── README.md                        # этот файл
 ├── .github/workflows/builder.yaml   # сборка и публикация образов в GHCR
+├── examples/                        # примеры панели «Электроэнергия» и вспомогательных сущностей
 ├── _source/                         # исходные картинки в высоком разрешении (не публикуются)
 └── energomera_meter_bridge/         # само приложение
     ├── config.yaml                  # опции, схема, архитектуры, image, url

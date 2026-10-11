@@ -86,3 +86,6 @@ configuration:
   read_max_power:
     name: "Read Monthly Maximum Power"
     description: "Read maximum active power recorded during the current month (MAXPE)"
+  read_device_info:
+    name: "Read Device Information"
+    description: "Meter serial number, network address and model. In array mode they sit at the end of the array, so once a day one cycle reads longer; the result is cached in /data and shown on the device page"

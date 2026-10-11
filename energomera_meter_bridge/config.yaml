@@ -88,6 +88,13 @@ options:
   read_monthly_archive: true
   read_daily_archive: true
   read_max_power: true
+  # Читать сведения об устройстве: заводской номер счётчика (SNUMB), сетевой
+  # адрес и модель. В режиме array они лежат в самом конце массива (SNUMB — на
+  # 99,5 % потока), поэтому раз в сутки один цикл дочитывает массив до конца,
+  # а результат кэшируется в /data. Номер попадает в карточку устройства
+  # («Серийный номер») и в диагностический сенсор «Serial number».
+  # Действует только в режиме array.
+  read_device_info: true
 
 schema:
   meter_host: str
@@ -119,3 +126,4 @@ schema:
   read_monthly_archive: bool
   read_daily_archive: bool
   read_max_power: bool
+  read_device_info: bool
