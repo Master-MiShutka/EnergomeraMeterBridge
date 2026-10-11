@@ -1,0 +1,355 @@
+# ============================================================================
+#  Дашборд «Затраты по розеткам» (Home Assistant)
+#
+#  Требует examples/energy_devices.yaml (суточные и месячные счётчики затрат,
+#  сенсоры стоимости дома, цена по времени суток) и examples/energy_helpers.yaml.
+#
+#  Куда вставлять: Настройки → Панели → «+ Добавить панель» → «Новый дашборд из
+#  пустого» → открыть → ⋮ → «Редактировать панель» → ⋮ → «Raw-редактор».
+#
+#  Три вкладки:
+#    «Сегодня»   — затраты за текущие сутки по каждой розетке и по дому целиком,
+#                  столбцы затрат за последние 7 суток;
+#    «Месяц»     — затраты за текущий и прошлый месяц, столбцы по месяцам;
+#    «Энергия»   — расход кВт·ч по розеткам, столбцы по суткам.
+#
+#  Графики построены на карточке statistics-graph: для накопительных сенсоров
+#  (интегральные сенсоры затрат имеют state_class: total) тип «change» даёт
+#  прирост за период, то есть расход или деньги за сутки/месяц.
+#
+#  Проверьте идентификаторы в Настройки → Устройства и службы → Объекты:
+#    затраты всего:    sensor.boiler_cost_total, sensor.heating_cable_cost_total,
+#                      sensor.attic_convector_cost_total, sensor.pc_cost_total
+#    за сутки:         sensor.<…>_cost_today     за месяц: sensor.<…>_cost_month
+#    прошлый месяц:    input_number.<…>_cost_last_month
+#    по дому:          sensor.house_cost_today, sensor.house_cost_month,
+#                      sensor.house_cost_prev_month
+#    энергия розеток:  sensor.0xa4c138a36309b33a_energy (комп),
+#                      sensor.0xa4c138f501c578e3_energy (бойлер),
+#                      sensor.attic_convector_energy (конвектор),
+#                      sensor.rozetka_greiushchii_kabel_potreblenie_toka (кабель)
+# ============================================================================
+
+title: Электроэнергия по устройствам
+views:
+  # ------------------------------------------------------------------ сегодня
+  - title: Сегодня
+    path: today
+    icon: mdi:cash-clock
+    cards:
+      - type: markdown
+        content: |
+          {% set devices = [('Бойлер', 'boiler'), ('Греющий кабель', 'heating_cable'),
+                            ('Конвектор мансарда', 'attic_convector'), ('Компьютер', 'pc')] -%}
+          {% set ns = namespace(sum=0) -%}
+          ## Затраты за текущие сутки
+
+          ### {{ states('sensor.house_cost_today') | float(0) | round(2) }} BYN по дому
+
+          | Устройство | Сегодня, BYN | За месяц, BYN |
+          |:--|--:|--:|
+          {% for label, key in devices -%}
+          {% set today = states('sensor.' ~ key ~ '_cost_today') | float(0) -%}
+          {% set month = states('sensor.' ~ key ~ '_cost_month') | float(0) -%}
+          {% set ns.sum = ns.sum + today -%}
+          | {{ label }} | {{ today | round(2) }} | {{ month | round(2) }} |
+          {% endfor -%}
+          | **Итого по розеткам** | **{{ ns.sum | round(2) }}** | | 
+
+          Дом целиком за месяц: **{{ states('sensor.house_cost_month') | float(0) | round(2) }} BYN**,
+          за прошлый месяц: {{ states('sensor.house_cost_prev_month') | float(0) | round(2) }} BYN.
+      - type: statistics-graph
+        title: Затраты по суткам, BYN
+        chart_type: bar
+        period: day
+        days_to_show: 7
+        stat_types:
+          - change
+        entities:
+          - entity: sensor.boiler_cost_total
+            name: Бойлер
+          - entity: sensor.heating_cable_cost_total
+            name: Греющий кабель
+          - entity: sensor.attic_convector_cost_total
+            name: Конвектор мансарда
+          - entity: sensor.pc_cost_total
+            name: Компьютер
+      - type: entities
+        title: За сутки и за месяц
+        state_color: false
+        entities:
+          - entity: sensor.house_cost_today
+            name: Дом целиком, сегодня
+          - entity: sensor.house_cost_month
+            name: Дом целиком, за месяц
+          - type: divider
+          - entity: sensor.boiler_cost_today
+            name: Бойлер, сегодня
+          - entity: sensor.boiler_cost_month
+            name: Бойлер, за месяц
+          - entity: sensor.heating_cable_cost_today
+            name: Кабель, сегодня
+          - entity: sensor.heating_cable_cost_month
+            name: Кабель, за месяц
+          - entity: sensor.attic_convector_cost_today
+            name: Конвектор, сегодня
+          - entity: sensor.attic_convector_cost_month
+            name: Конвектор, за месяц
+          - entity: sensor.pc_cost_today
+            name: Компьютер, сегодня
+          - entity: sensor.pc_cost_month
+            name: Компьютер, за месяц
+
+  # -------------------------------------------------------------------- месяц
+  - title: Месяц
+    path: month
+    icon: mdi:calendar-month
+    cards:
+      - type: markdown
+        content: |
+          {% set devices = [('Бойлер', 'boiler'), ('Греющий кабель', 'heating_cable'),
+                            ('Конвектор мансарда', 'attic_convector'), ('Компьютер', 'pc')] -%}
+          {% set ns = namespace(now=0, prev=0) -%}
+          ## Затраты по месяцам
+
+          ### {{ states('sensor.house_cost_month') | float(0) | round(2) }} BYN с начала месяца
+
+          Прошлый месяц по дому: **{{ states('sensor.house_cost_prev_month') | float(0) | round(2) }} BYN**.
+
+          | Устройство | Текущий месяц, BYN | Прошлый месяц, BYN |
+          |:--|--:|--:|
+          {% for label, key in devices -%}
+          {% set now = states('sensor.' ~ key ~ '_cost_month') | float(0) -%}
+          {% set prev = states('input_number.' ~ key ~ '_cost_last_month') | float(0) -%}
+          {% set ns.now = ns.now + now -%}
+          {% set ns.prev = ns.prev + prev -%}
+          | {{ label }} | {{ now | round(2) }} | {{ prev | round(2) }} |
+          {% endfor -%}
+          | **Итого по розеткам** | **{{ ns.now | round(2) }}** | **{{ ns.prev | round(2) }}** |
+      - type: markdown
+        content: |
+          {% set devices = [('Бойлер', 'boiler'), ('Греющий кабель', 'heating_cable'),
+                            ('Конвектор мансарда', 'attic_convector'), ('Компьютер', 'pc')] -%}
+          {% set ns = namespace(month=0, total=0) -%}
+          ## Экономия на тарифах
+
+          Считается как мощность × (цена пика − действующая цена): в зоне T1 ноль,
+          в T2 и T3 копится. Это «сколько не заплачено из-за того, что нагрузка
+          работала не в пик», а не выписка из банка.
+
+          Дом целиком: **{{ states('sensor.house_savings_month') | float(0) | round(2) }} BYN**
+          за текущий месяц, {{ states('sensor.house_savings_prev_month') | float(0) | round(2) }} BYN
+          за прошлый, {{ states('sensor.house_savings_total') | float(0) | round(0) }} BYN
+          за всю историю счётчика (оценка: при смене тарифов история пересчитывается
+          по новым ценам).
+
+          | Прибор | За месяц, BYN | Всего, BYN |
+          |:--|--:|--:|
+          {% for label, key in devices -%}
+          {% set month = states('sensor.' ~ key ~ '_saving_month') | float(0) -%}
+          {% set total = states('sensor.' ~ key ~ '_savings_total') | float(0) -%}
+          {% set ns.month = ns.month + month -%}
+          {% set ns.total = ns.total + total -%}
+          | {{ label }} | {{ '%.2f' % month }} | {{ '%.2f' % total }} |
+          {% endfor -%}
+          | **Итого по розеткам** | **{{ '%.2f' % ns.month }}** | **{{ '%.2f' % ns.total }}** |
+
+          Хотите больше — включайте таймеры: блок «Что можно сэкономить» на вкладке
+          «Энергия» показывает, сколько даст перенос каждой нагрузки в ночную зону.
+      - type: statistics-graph
+        title: Затраты по месяцам, BYN
+        chart_type: bar
+        period: month
+        days_to_show: 400
+        stat_types:
+          - change
+        entities:
+          - entity: sensor.boiler_cost_total
+            name: Бойлер
+          - entity: sensor.heating_cable_cost_total
+            name: Греющий кабель
+          - entity: sensor.attic_convector_cost_total
+            name: Конвектор мансарда
+          - entity: sensor.pc_cost_total
+            name: Компьютер
+      - type: statistics-graph
+        title: Экономия по месяцам, BYN
+        chart_type: bar
+        period: month
+        days_to_show: 400
+        stat_types:
+          - change
+        entities:
+          - entity: sensor.boiler_savings_total
+            name: Бойлер
+          - entity: sensor.heating_cable_savings_total
+            name: Греющий кабель
+          - entity: sensor.attic_convector_savings_total
+            name: Конвектор мансарда
+          - entity: sensor.pc_savings_total
+            name: Компьютер
+
+  # ------------------------------------------------------------------ энергия
+  - title: Энергия
+    path: energy
+    icon: mdi:lightning-bolt
+    cards:
+      - type: markdown
+        content: |
+          {% set hour = now().hour -%}
+          {% set t1 = states('input_number.tariff_t1') | float(0) -%}
+          {% set t2 = states('input_number.tariff_t2') | float(0) -%}
+          {% set t3 = states('input_number.tariff_t3') | float(0) -%}
+          {% set free_day = is_state('binary_sensor.meter_free_day', 'on') -%}
+          {% set zone = 'T2' if free_day else ('T1' if hour >= 17 and hour < 23 else ('T2' if hour >= 23 or hour < 6 else 'T3')) -%}
+          {% set left = namespace(h=0) -%}
+          {% for i in range(1, 25) -%}
+            {% if left.h == 0 and (hour + i) % 24 in [6, 17, 23] -%}
+              {% set left.h = i -%}
+            {% endif -%}
+          {% endfor -%}
+          ## Тарифы на электроэнергию
+
+          {% if free_day -%}
+          Сегодня **выходной или праздник**: весь день действует **T2** —
+          {{ states('sensor.current_electricity_price') }} BYN за кВт·ч, до конца суток.
+          {% else -%}
+          Сейчас действует **{{ zone }}** — {{ states('sensor.current_electricity_price') }} BYN за кВт·ч,
+          до смены зоны {{ left.h }} ч.
+          {% endif -%}
+
+          | Тариф | Когда действует | Цена, BYN/кВт·ч | Сейчас |
+          |:--|:--|--:|:--:|
+          | **T1** — максимальные нагрузки (пик) | 17:00–23:00. Самая дорогая зона: вечером одновременно включаются плита, бойлер и обогреватели | {{ t1 }} | {{ '← сейчас' if zone == 'T1' else '—' }} |
+          | **T2** — минимальные нагрузки (ночь) | 23:00–06:00. Самая дешёвая зона: выгодно греть бойлер, стирать и заряжать EV | {{ t2 }} | {{ '← сейчас' if zone == 'T2' else '—' }} |
+          | **T3** — остальное время суток (полупик) | 06:00–17:00. Дневная зона, цена между T2 и T1 | {{ t3 }} | {{ '← сейчас' if zone == 'T3' else '—' }} |
+
+          **Выходные и исключённые дни.** У счётчика тариф переключается сам: по
+          будням — по расписанию зон, а в субботу, воскресенье и в свои
+          исключённые дни — целиком на график 2 (минимальные нагрузки). Счётчик
+          различает только день недели и девять своих дат: объявленные рабочими
+          субботы он считает выходными, а перенесённые выходные в будни — обычными
+          днями.
+          Исключённые дни в счётчике заданы фиксированно: 01.01, 02.01, 07.01,
+          08.03, 01.05, 09.05, 03.07, 07.11, 25.12. В такие дни переносить
+          нагрузку на ночь бессмысленно: она и так идёт по дешёвому тарифу.
+          Определяет день бинарный сенсор `binary_sensor.meter_free_day`;
+          Радуницу и объявленные переносы (их счётчик знать не может) можно
+          добавить в `input_text.extra_nonwork_days` — тогда расчёт пойдёт строго
+          по постановлению, а не по показаниям счётчика.
+
+          Это тарифные регистры счётчика: он накапливает энергию отдельно по каждой
+          зоне, поэтому расход и деньги по T1, T2 и T3 считаются точно, без деления
+          суммарного потребления на глаз. Цены обновляются автоматизацией из
+          тарифов для населения (см. `examples/tariff_automation.yaml`), а
+          `sensor.current_electricity_price` подставляет действующую цену по часам —
+          её используют отдельные устройства в панели «Энергия».
+
+          Сверьте границы зон с программированием тарифов в вашем счётчике: если
+          ночь у него записана, например, в T3, поменяйте подписи и порядок цен,
+          иначе стоимость посчитается неверно.
+      - type: markdown
+        content: |
+          {% set t1 = states('input_number.tariff_t1') | float(0) -%}
+          {% set t2 = states('input_number.tariff_t2') | float(0) -%}
+          {% set ratio = (t1 / t2) | round(1) if t2 > 0 else 0 -%}
+          {% set devices = [('Бойлер', 'boiler', 'sensor.0xa4c138f501c578e3_power'),
+                            ('Греющий кабель', 'heating_cable', 'sensor.rozetka_greiushchii_kabel_potrebliaemaia_moshchnost'),
+                            ('Конвектор мансарда', 'attic_convector', 'sensor.cuco_v2eur_0717_electric_power')] -%}
+          {% set ns = namespace(saving=0) -%}
+          ## Что можно сэкономить
+
+          {% if t2 <= 0 -%}
+          Цены на электроэнергию ещё не заполнены: нажмите кнопку **«Обновить цены на
+          электроэнергию»** (или впишите их в `input_number.tariff_t1…t3`). После этого
+          здесь появится расчёт — сколько стоит час работы каждого прибора и сколько
+          можно сэкономить, перенеся нагрузку в ночную зону T2.
+          {% else -%}
+          Ночная зона **T2** дешевле пика **T1** в {{ ratio }} раза ({{ t1 }} против {{ t2 }} BYN
+          за кВт·ч), поэтому перенос нагрузки с вечера на ночь — самый простой способ
+          снизить счёт, не отказываясь от comfortа.
+
+          | Прибор | Час работы сейчас | Час работы в T2 | За месяц | Экономия, если всё в T2 |
+          |:--|--:|--:|--:|--:|
+          {% for label, key, power in devices -%}
+          {% set kw = states(power) | float(0) / 1000 -%}
+          {% set kwh = states('sensor.' ~ key ~ '_energy_month') | float(0) -%}
+          {% set cost = states('sensor.' ~ key ~ '_cost_month') | float(0) -%}
+          {% set avg = (cost / kwh) if kwh > 0 else 0 -%}
+          {% set save = ((kwh * (avg - t2)) | round(2)) if avg > t2 else 0 -%}
+          {% set ns.saving = ns.saving + save -%}
+          | {{ label }} | {{ '%.3f' % (kw * t1) }} BYN | {{ '%.3f' % (kw * t2) }} BYN | {{ '%.1f' % kwh }} кВт·ч | до {{ '%.2f' % save }} BYN |
+          {% endfor -%}
+          | **Итого** | | | | **до {{ '%.2f' % ns.saving }} BYN** |
+
+          EV-зарядка: за месяц {{ '%.1f' % (states('sensor.ev_energy_month') | float(0)) }} кВт·ч;
+          если заряжать её в T2 вместо вечернего пика, разница цен на этот объём — до
+          {{ '%.2f' % (states('sensor.ev_energy_month') | float(0) * (t1 - t2)) }} BYN.
+
+          В субботу, воскресенье и исключённые дни счётчика переносить ничего не
+          нужно: весь день идёт по T2 (см. таблицу тарифов выше).
+
+          **Что сделать**
+
+          * бойлер — таймер с 23:00 до 06:00, в пик 17:00–23:00 не греть;
+          * стиральную и посудомоечную машины, зарядку EV — отложенный старт на 23:00;
+          * тёплый пол и греющий кабель — на ночь: бетон держит тепло до утра;
+          * конвектор мансарды — включать до 17:00 или после 23:00;
+          * крупные разовые дела (рендер, стирка, зарядка) — планировать на T2, а не на вечер.
+
+          Оценка «если всё в T2» — верхняя граница: часть энергии перенести нельзя
+          (холодильник, освещение, готовка). Средняя уплаченная цена считается как
+          «затраты прибора за месяц ÷ его расход за месяц», поэтому цифры уточняются
+          по мере накопления статистики.
+          {% endif -%}
+      - type: markdown
+        content: |
+          ## Расход по розеткам
+
+          Столбцы — расход за сутки по каждой розетке. Данные берутся из
+          накопительных сенсоров энергии самих розеток, поэтому история есть
+          ровно с того момента, как они начали записываться.
+      - type: statistics-graph
+        title: Расход по суткам, кВт·ч
+        chart_type: bar
+        period: day
+        days_to_show: 7
+        stat_types:
+          - change
+        entities:
+          - entity: sensor.0xa4c138f501c578e3_energy
+            name: Бойлер
+          - entity: sensor.0xa4c138a36309b33a_energy
+            name: Компьютер
+          - entity: sensor.attic_convector_energy
+            name: Конвектор мансарда
+          - entity: sensor.rozetka_greiushchii_kabel_potreblenie_toka
+            name: Греющий кабель
+      - type: statistics-graph
+        title: Расход по месяцам, кВт·ч
+        chart_type: bar
+        period: month
+        days_to_show: 400
+        stat_types:
+          - change
+        entities:
+          - entity: sensor.0xa4c138f501c578e3_energy
+            name: Бойлер
+          - entity: sensor.0xa4c138a36309b33a_energy
+            name: Компьютер
+          - entity: sensor.attic_convector_energy
+            name: Конвектор мансарда
+      - type: entities
+        title: Текущая мощность и цена
+        entities:
+          - entity: sensor.current_electricity_price
+            name: Цена сейчас, BYN/кВт·ч
+          - type: divider
+          - entity: sensor.0xa4c138f501c578e3_power
+            name: Бойлер, Вт
+          - entity: sensor.0xa4c138a36309b33a_power
+            name: Компьютер, Вт
+          - entity: sensor.cuco_v2eur_0717_electric_power
+            name: Конвектор, Вт
+          - entity: sensor.rozetka_greiushchii_kabel_potrebliaemaia_moshchnost
+            name: Кабель, Вт

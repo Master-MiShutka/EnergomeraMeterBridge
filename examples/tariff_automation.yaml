@@ -1,0 +1,218 @@
+# ============================================================================
+#  Цены на электроэнергию: автоматизация Home Assistant (без аддона)
+#
+#  Раз в месяц (1-го числа) и по кнопке «Обновить цены» автоматизация читает
+#  страницу энергоснабжающей организации, вытаскивает три цены за кВт·ч и
+#  записывает их в помощники input_number.tariff_t1…t3 — из них панель
+#  «Электроэнергия» и дашборд из examples/energy_dashboard.yaml считают
+#  стоимость.
+#
+#
+#  КУДА ПОЛОЖИТЬ
+#  Вариант 1 (рекомендуется): сохранить этот файл как /config/packages/tariffs.yaml
+#  и один раз добавить в configuration.yaml:
+#      homeassistant:
+#        packages: !include_dir_named packages
+#  Вариант 2: скопировать блоки sensor:, input_button: и automation: в свои
+#  configuration.yaml / automations.yaml.
+#
+#  ЧТО НАСТРОИТЬ ПОД СЕБЯ
+#  * tariff_url — адрес страницы с тарифами для населения (по умолчанию
+#    Брестэнерго; Брестэнерго и Могилёвэнерго публикуют одно постановление
+#    Совмина, поэтому адрес взаимозаменяем). Гродноэнерго и pravo.by программно
+#    недоступны: сервер не отдаёт промежуточный сертификат, и проверка TLS
+#    не проходит.
+#  * tariff_section — номер пункта таблицы: 5.3 — прочие потребители,
+#    1.3 — дома с электроплитами, 4.3 — полное возмещение затрат.
+#  * tariff_labels — подписи периодов и то, какому регистру счётчика они
+#    соответствуют. По умолчанию: T1 — максимальные нагрузки (17–23),
+#    T2 — минимальные (23–6), T3 — остальное время суток. Сверьте с
+#    программированием зон в счётчике!
+#  * chat_id в уведомлении (или замените службу на свою).
+#
+#  ПОЧЕМУ ПИШЕМ В input_number, А НЕ ТОЛЬКО ЧИТАЕМ САЙТ
+#  Сенсоры-источники умеют быть сущностями цены для панели «Энергия»
+#  (device_class: monetary, BYN/kWh), но если сайт ляжет или изменит вёрстку,
+#  сенсор станет unknown и панель перестанет считать стоимость. Поэтому
+#  автоматизация проверяет разобранные значения и перекладывает их в помощники
+#  input_number.tariff_t1…t3: в панели указывайте именно их — тогда последняя
+#  известная цена продолжает действовать даже при сбое сайта.
+#
+#  ПРОВЕРКА ШАБЛОНОВ
+#  Инструменты разработчика → Шаблон: вставьте содержимое value_template
+#  и подставьте вместо value текст страницы, чтобы убедиться в разборе.
+# ============================================================================
+
+sensor:
+  # --- Цена T1: максимальные нагрузки (17.00–23.00) --------------------------
+  - platform: rest
+    name: Tariff T1 source
+    unique_id: tariff_source_t1
+    resource: &tariff_url "https://xn--90aefa3bijdgk5j.xn--90ais/tarify-na-energiiu-dlia-fiziceskix-lic"
+    scan_interval: 21600          # 6 часов; перед обновлением автоматизация
+                                  # всё равно обновляет сенсоры принудительно
+    device_class: monetary        # цена за единицу энергии: панель «Энергия»
+    unit_of_measurement: "BYN/kWh"  # принимает такую сущность как источник цены
+                                  # (Настройки → Панели → Энергия →
+                                  #  «Использовать сущность, отслеживающую цену»)
+    value_template: >-
+      {% set text = (value | striptags | regex_replace('\\s+', ' ')) -%}
+      {#- берём текст ПОСЛЕ метки 5.3: до неё идут пункты 1.x (электроплиты) -#}
+      {% set ns = namespace(after=false, window='') -%}
+      {% for part in text.split('5.3') -%}
+        {% if ns.after and not ns.window and 'минимальных нагрузок' in part
+              and 'максимальных нагрузок' in part
+              and 'остальное время суток' in part -%}
+          {% set ns.window = part %}
+        {% endif -%}
+        {% set ns.after = true %}
+      {% endfor -%}
+      {% set found = ns.window | regex_findall('максимальных нагрузок [(]с 17[.:-]00 до 23[.:-]00[)] +([0-9]+[.,][0-9]+)') -%}
+      {{ (found[0] | replace(',', '.')) if found else 'unknown' }}
+
+  # --- Цена T2: минимальные нагрузки (23.00–6.00) ---------------------------
+  - platform: rest
+    name: Tariff T2 source
+    unique_id: tariff_source_t2
+    resource: *tariff_url
+    scan_interval: 21600
+    device_class: monetary
+    unit_of_measurement: "BYN/kWh"
+    value_template: >-
+      {% set text = (value | striptags | regex_replace('\\s+', ' ')) -%}
+      {#- берём текст ПОСЛЕ метки 5.3: до неё идут пункты 1.x (электроплиты) -#}
+      {% set ns = namespace(after=false, window='') -%}
+      {% for part in text.split('5.3') -%}
+        {% if ns.after and not ns.window and 'минимальных нагрузок' in part
+              and 'максимальных нагрузок' in part
+              and 'остальное время суток' in part -%}
+          {% set ns.window = part %}
+        {% endif -%}
+        {% set ns.after = true %}
+      {% endfor -%}
+      {% set found = ns.window | regex_findall('минимальных нагрузок [(]с 23[.:-]00 до 0?6[.:-]00[)] +([0-9]+[.,][0-9]+)') -%}
+      {{ (found[0] | replace(',', '.')) if found else 'unknown' }}
+
+  # --- Цена T3: остальное время суток (6.00–17.00) --------------------------
+  - platform: rest
+    name: Tariff T3 source
+    unique_id: tariff_source_t3
+    resource: *tariff_url
+    scan_interval: 21600
+    device_class: monetary
+    unit_of_measurement: "BYN/kWh"
+    value_template: >-
+      {% set text = (value | striptags | regex_replace('\\s+', ' ')) -%}
+      {#- берём текст ПОСЛЕ метки 5.3: до неё идут пункты 1.x (электроплиты) -#}
+      {% set ns = namespace(after=false, window='') -%}
+      {% for part in text.split('5.3') -%}
+        {% if ns.after and not ns.window and 'минимальных нагрузок' in part
+              and 'максимальных нагрузок' in part
+              and 'остальное время суток' in part -%}
+          {% set ns.window = part %}
+        {% endif -%}
+        {% set ns.after = true %}
+      {% endfor -%}
+      {% set found = ns.window | regex_findall('остальное время суток +([0-9]+[.,][0-9]+)') -%}
+      {{ (found[0] | replace(',', '.')) if found else 'unknown' }}
+
+input_button:
+  tariff_refresh:
+    name: "Обновить цены на электроэнергию"
+    icon: mdi:cash-refresh
+
+automation:
+  - alias: "Цены на электроэнергию: обновление с сайта"
+    id: tariff_price_update
+    description: >-
+      Раз в месяц (1-го числа) и по кнопке читает тарифы для населения с сайта
+      энергоснабжающей организации и записывает их в помощники
+      input_number.tariff_t1…t3
+    triggers:
+      # 1-го числа каждого месяца
+      - trigger: time
+        at: "03:10:00"
+      # либо вручную кнопкой «Обновить цены на электроэнергию»
+      - trigger: state
+        entity_id: input_button.tariff_refresh
+    condition:
+      - condition: template
+        value_template: "{{ trigger.platform != 'time' or now().day == 1 }}"
+    actions:
+      # 1. Принудительно обновляем сенсоры-источники (иначе у них данные
+      #    возрастом до 6 часов) и ждём, пока они станут числами.
+      - action: homeassistant.update_entity
+        target:
+          entity_id:
+            - sensor.tariff_t1_source
+            - sensor.tariff_t2_source
+            - sensor.tariff_t3_source
+      - wait_template: >-
+          {{ states('sensor.tariff_t1_source') | is_number
+             and states('sensor.tariff_t2_source') | is_number
+             and states('sensor.tariff_t3_source') | is_number }}
+        timeout: "00:01:00"
+        continue_on_timeout: true
+
+      # 2. Считаем новые и старые значения.
+      - variables:
+          t1: "{{ states('sensor.tariff_t1_source') | float(0) }}"
+          t2: "{{ states('sensor.tariff_t2_source') | float(0) }}"
+          t3: "{{ states('sensor.tariff_t3_source') | float(0) }}"
+          old1: "{{ states('input_number.tariff_t1') | float(0) }}"
+          old2: "{{ states('input_number.tariff_t2') | float(0) }}"
+          old3: "{{ states('input_number.tariff_t3') | float(0) }}"
+
+      - choose:
+          # 3a. Значения правдоподобны и порядок периодов верный
+          #     (минимальные ≤ остальное ≤ максимальные) — записываем.
+          - conditions:
+              - condition: template
+                value_template: "{{ t1 > 0 and t2 > 0 and t3 > 0 and t2 <= t3 <= t1 }}"
+            sequence:
+              - action: input_number.set_value
+                target:
+                  entity_id: input_number.tariff_t1
+                data:
+                  value: "{{ t1 }}"
+              - action: input_number.set_value
+                target:
+                  entity_id: input_number.tariff_t2
+                data:
+                  value: "{{ t2 }}"
+              - action: input_number.set_value
+                target:
+                  entity_id: input_number.tariff_t3
+                data:
+                  value: "{{ t3 }}"
+              - if:
+                  - condition: template
+                    value_template: "{{ old1 != t1 or old2 != t2 or old3 != t3 }}"
+                then:
+                  - action: telegram_bot.send_message
+                    data:
+                      chat_id: 123456789          # ← ваш chat_id
+                      parse_mode: html
+                      message: |
+                        ⚡️ <b>Изменились тарифы на электроэнергию</b>
+                        T1 (максимальные, 17–23): {{ old1 }} → {{ t1 }} BYN/кВт·ч
+                        T2 (минимальные, 23–6): {{ old2 }} → {{ t2 }} BYN/кВт·ч
+                        T3 (остальное время): {{ old3 }} → {{ t3 }} BYN/кВт·ч
+                        Помощники input_number обновлены.
+          # 3b. Разобрать не удалось — ничего не пишем и сообщаем об этом.
+          - conditions:
+              - condition: template
+                value_template: "{{ t1 <= 0 or t2 <= 0 or t3 <= 0 or not (t2 <= t3 <= t1) }}"
+            sequence:
+              - action: telegram_bot.send_message
+                data:
+                  chat_id: 123456789          # ← ваш chat_id
+                  parse_mode: html
+                  message: |
+                    ⚠️ Не удалось разобрать цены на электроэнергию с сайта.
+                    Получено: T1={{ states('sensor.tariff_t1_source') }},
+                    T2={{ states('sensor.tariff_t2_source') }},
+                    T3={{ states('sensor.tariff_t3_source') }}.
+                    Проверьте структуру страницы и шаблоны сенсоров;
+                    прежние цены в помощниках оставлены без изменений.
+    mode: single

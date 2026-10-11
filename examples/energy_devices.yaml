@@ -1,0 +1,685 @@
+# ============================================================================
+#  Учёт электроэнергии по устройствам и ежемесячный отчёт (Home Assistant)
+#
+#  Дополняет examples/tariff_automation.yaml (цены) и
+#  examples/energy_helpers.yaml (панель дома).
+#
+#  ЧТО ДЕЛАЕТ
+#  1. Сенсор «текущая цена» — подставляет цену по времени суток: T1 с 17:00 до
+#     23:00, T2 с 23:00 до 6:00, T3 в остальное время. Именно его нужно
+#     указывать как источник цены для ОТДЕЛЬНЫХ УСТРОЙСТВ в панели «Энергия»:
+#     их энергия не разделена по тарифным регистрам, и цена меняется по часам.
+#     Для сетевых подключений (Т1/Т2/Т3 со счётчика) цена НЕ нужна динамическая:
+#     там у каждого подключения своя постоянная цена — input_number.tariff_t1…t3.
+#  2. Интегральные сенсоры (Riemann) для устройств, у которых есть только
+#     мощность: превращают ватты в накопительные кВт·ч.
+#  3. Сенсоры стоимости по устройствам: «рубли в час» (мощность × цена) и
+#     накопительный итог в BYN — для карточек и автоматизаций.
+#  4. Счётчики затрат за месяц (utility_meter) и автоматизации: снимок значений
+#     в последнюю минуту месяца и отчёт в Telegram 1-го числа.
+#
+#  ПОЧЕМУ СНИМОК, А НЕ ЧТЕНИЕ 1-ГО ЧИСЛА
+#  utility_meter сбрасывается ровно в 00:00 первого числа, поэтому читать его
+#  «после факта» бессмысленно. Здесь значения сохраняются за 30 секунд до полуночи.
+#
+#  КУДА ПОЛОЖИТЬ: /config/packages/energy_devices.yaml
+#  (в configuration.yaml: homeassistant: packages: !include_dir_named packages)
+#
+#  ИМЕНА СЕНСОРОВ — АНГЛИЙСКИЕ, чтобы идентификаторы сущностей были
+#  предсказуемыми (у сенсоров идентификатор образуется из имени). Отображаемые
+#  имена можно поменять в интерфейсе: Настройки → Устройства и службы → Объекты →
+#  сущность → шестерёнка → «Имя» — идентификатор при этом не изменится.
+#
+#  ВАЖНО: проверьте идентификаторы и единицы сенсоров розеток в
+#  Настройки → Устройства и службы → Объекты.
+# ============================================================================
+
+template:
+  # --- Когда у счётчика действует «График 2» (тариф минимальных нагрузок) -----
+  # Счётчик переключает тариф сам: по будням — по расписанию зон, а в выходные и
+  # в свои исключённые дни — целиком на график 2 (самый дешёвый). Исключённые дни
+  # в счётчике заданы фиксированным списком (см. таблицу «Искл. день» в программе
+  # счётчика): 01.01, 02.01, 07.01, 08.03, 01.05, 09.05, 03.07, 07.11, 25.12.
+  #
+  # Про выходные: счётчик различает только день недели, поэтому ЛЮБЫЕ суббота и
+  # воскресенье — дешёвые, в том числе объявленные рабочими (переносы). И
+  # наоборот: перенесённый выходной в будний день счётчик считает обычным днём.
+  #
+  # Расчёт по постановлению чуть шире: в него попадают ещё Радуница (переходящая
+  # дата) и объявленные переносы — счётчик их знать не может. Если хотите считать
+  # строго по постановлению, впишите эти даты в input_text.extra_nonwork_days
+  # в формате ММ-ДД через запятую, например: 04-21,04-20.
+  #
+  # Либо подключите интеграцию Workday (страна Belarus, рабочие дни Пн–Пт,
+  # «Days to exclude» = Holidays) и замените строку условия ниже на такую — тогда
+  # Радуница и переносы подтянутся сами (имя сенсора уточните в Настройки →
+  # Устройства и службы → Объекты, у него бывает суффикс страны):
+  #   {{ now().weekday() >= 5
+  #      or is_state('binary_sensor.workday_sensor_by', 'off')
+  #      or md in meter_days or md in extra }}
+  - binary_sensor:
+      - name: "Meter free day"
+        unique_id: meter_free_day
+        icon: mdi:calendar-star
+        state: >-
+          {% set md = now().strftime('%m-%d') -%}
+          {% set meter_days = ['01-01', '01-02', '01-07', '03-08', '05-01',
+                               '05-09', '07-03', '11-07', '12-25'] -%}
+          {% set extra = (states('input_text.extra_nonwork_days') | replace(' ', '')).split(',') -%}
+          {{ now().weekday() >= 5 or md in meter_days or md in extra }}
+
+  # --- Текущая цена электроэнергии по времени суток ------------------------
+  - sensor:
+      - name: "Current electricity price"
+        unique_id: current_electricity_price
+        device_class: monetary
+        unit_of_measurement: "BYN/kWh"
+        icon: mdi:cash-clock
+        # В «свободный» день (выходной или исключённый день счётчика) весь день
+        # действует T2 — см. бинарный сенсор meter_free_day выше.
+        state: >
+          {% set t1 = states('input_number.tariff_t1') | float(0.5467) %}
+          {% set t2 = states('input_number.tariff_t2') | float(0.1822) %}
+          {% set t3 = states('input_number.tariff_t3') | float(0.2126) %}
+          {% set free_day = is_state('binary_sensor.meter_free_day', 'on') %}
+          {% set h = now().hour %}
+          {% if free_day %}{{ t2 }}
+          {% elif h >= 17 and h < 23 %}{{ t1 }}
+          {% elif h >= 23 or h < 6 %}{{ t2 }}
+          {% else %}{{ t3 }}{% endif %}
+
+  # --- «Рубли в час» по мощным нагрузкам -----------------------------------
+  # Мощность переводим в кВт и умножаем на текущую цену.
+  - sensor:
+      - name: "Boiler cost rate"
+        unique_id: boiler_cost_rate
+        unit_of_measurement: "BYN/h"
+        icon: mdi:cash
+        state: >-
+          {{ (states('sensor.0xa4c138f501c578e3_power') | float(0) / 1000
+              * states('sensor.current_electricity_price') | float(0)) | round(4) }}
+      - name: "Heating cable cost rate"
+        unique_id: heating_cable_cost_rate
+        unit_of_measurement: "BYN/h"
+        icon: mdi:cash
+        state: >-
+          {{ (states('sensor.rozetka_greiushchii_kabel_potrebliaemaia_moshchnost') | float(0) / 1000
+              * states('sensor.current_electricity_price') | float(0)) | round(4) }}
+      - name: "Attic convector cost rate"
+        unique_id: attic_convector_cost_rate
+        unit_of_measurement: "BYN/h"
+        icon: mdi:cash
+        state: >-
+          {{ (states('sensor.cuco_v2eur_0717_electric_power') | float(0) / 1000
+              * states('sensor.current_electricity_price') | float(0)) | round(4) }}
+      - name: "PC cost rate"
+        unique_id: pc_cost_rate
+        unit_of_measurement: "BYN/h"
+        icon: mdi:cash
+        state: >-
+          {{ (states('sensor.0xa4c138a36309b33a_power') | float(0) / 1000
+              * states('sensor.current_electricity_price') | float(0)) | round(4) }}
+
+  # --- Стоимость по дому целиком --------------------------------------------
+  # Считается из тарифных регистров счётчика, а не накоплением: у каждого
+  # регистра своя цена, а цена меняется постановлением, поэтому «накопительный
+  # рубль» давал бы скачок в момент смены тарифа. За сутки берём суточные
+  # счётчики из examples/energy_helpers.yaml, за месяц — разницу архивных
+  # показаний счётчика (ENMPE и ENMPE_PREV).
+  - sensor:
+      - name: "House cost today"
+        unique_id: house_cost_today
+        device_class: monetary
+        unit_of_measurement: "BYN"
+        icon: mdi:cash-multiple
+        state: >-
+          {{ (states('sensor.energy_today_t1') | float(0) * states('input_number.tariff_t1') | float(0)
+              + states('sensor.energy_today_t2') | float(0) * states('input_number.tariff_t2') | float(0)
+              + states('sensor.energy_today_t3') | float(0) * states('input_number.tariff_t3') | float(0))
+             | round(2) }}
+      - name: "House cost month"
+        unique_id: house_cost_month
+        device_class: monetary
+        unit_of_measurement: "BYN"
+        icon: mdi:cash-multiple
+        state: >-
+          {{ ((states('sensor.energomera_ce301_active_energy_t1') | float(0)
+               - states('sensor.energomera_ce301_energy_at_month_start_t1') | float(0)) * states('input_number.tariff_t1') | float(0)
+              + (states('sensor.energomera_ce301_active_energy_t2') | float(0)
+               - states('sensor.energomera_ce301_energy_at_month_start_t2') | float(0)) * states('input_number.tariff_t2') | float(0)
+              + (states('sensor.energomera_ce301_active_energy_t3') | float(0)
+               - states('sensor.energomera_ce301_energy_at_month_start_t3') | float(0)) * states('input_number.tariff_t3') | float(0))
+             | round(2) }}
+      - name: "House cost prev month"
+        unique_id: house_cost_prev_month
+        device_class: monetary
+        unit_of_measurement: "BYN"
+        icon: mdi:cash-multiple
+        state: >-
+          {{ ((states('sensor.energomera_ce301_energy_at_month_start_t1') | float(0)
+               - states('sensor.ves_dom_obshchii_schetchik_elektroenergii_energy_at_previous_month_start_t1') | float(0)) * states('input_number.tariff_t1') | float(0)
+              + (states('sensor.energomera_ce301_energy_at_month_start_t2') | float(0)
+               - states('sensor.ves_dom_obshchii_schetchik_elektroenergii_energy_at_previous_month_start_t2') | float(0)) * states('input_number.tariff_t2') | float(0)
+              + (states('sensor.energomera_ce301_energy_at_month_start_t3') | float(0)
+               - states('sensor.ves_dom_obshchii_schetchik_elektroenergii_energy_at_previous_month_start_t3') | float(0)) * states('input_number.tariff_t3') | float(0))
+             | round(2) }}
+
+  # --- Экономия: сколько НЕ заплачено из-за того, что нагрузка работала не
+  # в пиковый тариф. Считается как мощность × (цена T1 − действующая цена):
+  # в пике ноль, в T2 и T3 растёт. Накопленный итог получается интегрированием
+  # этой скорости — так цифра честная, а не «сколько было бы, если бы».
+  - sensor:
+      - name: "Boiler saving rate"
+        unique_id: boiler_saving_rate
+        unit_of_measurement: "BYN/h"
+        icon: mdi:piggy-bank
+        state: >-
+          {% set kw = states('sensor.0xa4c138f501c578e3_power') | float(0) / 1000 -%}
+          {% set peak = states('input_number.tariff_t1') | float(0) -%}
+          {% set price = states('sensor.current_electricity_price') | float(0) -%}
+          {{ [kw * (peak - price), 0] | max | round(4) }}
+      - name: "Heating cable saving rate"
+        unique_id: heating_cable_saving_rate
+        unit_of_measurement: "BYN/h"
+        icon: mdi:piggy-bank
+        state: >-
+          {% set kw = states('sensor.rozetka_greiushchii_kabel_potrebliaemaia_moshchnost') | float(0) / 1000 -%}
+          {% set peak = states('input_number.tariff_t1') | float(0) -%}
+          {% set price = states('sensor.current_electricity_price') | float(0) -%}
+          {{ [kw * (peak - price), 0] | max | round(4) }}
+      - name: "Attic convector saving rate"
+        unique_id: attic_convector_saving_rate
+        unit_of_measurement: "BYN/h"
+        icon: mdi:piggy-bank
+        state: >-
+          {% set kw = states('sensor.cuco_v2eur_0717_electric_power') | float(0) / 1000 -%}
+          {% set peak = states('input_number.tariff_t1') | float(0) -%}
+          {% set price = states('sensor.current_electricity_price') | float(0) -%}
+          {{ [kw * (peak - price), 0] | max | round(4) }}
+      - name: "PC saving rate"
+        unique_id: pc_saving_rate
+        unit_of_measurement: "BYN/h"
+        icon: mdi:piggy-bank
+        state: >-
+          {% set kw = states('sensor.0xa4c138a36309b33a_power') | float(0) / 1000 -%}
+          {% set peak = states('input_number.tariff_t1') | float(0) -%}
+          {% set price = states('sensor.current_electricity_price') | float(0) -%}
+          {{ [kw * (peak - price), 0] | max | round(4) }}
+
+  # --- Накопленная экономия по дому целиком ---------------------------------
+  # По тарифным регистрам счётчика: энергия, накопленная в T2 и T3, умноженная на
+  # разницу с пиковым тарифом. Учтите: если постановление изменит цены, сенсор
+  # пересчитает всю историю по новым ценам — это оценка, а не банковская выписка.
+  - sensor:
+      - name: "House savings month"
+        unique_id: house_savings_month
+        device_class: monetary
+        unit_of_measurement: "BYN"
+        icon: mdi:piggy-bank
+        state: >-
+          {% set t1 = states('input_number.tariff_t1') | float(0) -%}
+          {% set m2 = states('sensor.energomera_ce301_active_energy_t2') | float(0)
+                     - states('sensor.energomera_ce301_energy_at_month_start_t2') | float(0) -%}
+          {% set m3 = states('sensor.energomera_ce301_active_energy_t3') | float(0)
+                     - states('sensor.energomera_ce301_energy_at_month_start_t3') | float(0) -%}
+          {{ (m2 * (t1 - states('input_number.tariff_t2') | float(0))
+              + m3 * (t1 - states('input_number.tariff_t3') | float(0))) | round(2) }}
+      - name: "House savings prev month"
+        unique_id: house_savings_prev_month
+        device_class: monetary
+        unit_of_measurement: "BYN"
+        icon: mdi:piggy-bank
+        state: >-
+          {% set t1 = states('input_number.tariff_t1') | float(0) -%}
+          {% set p2 = states('sensor.energomera_ce301_energy_at_month_start_t2') | float(0)
+                    - states('sensor.ves_dom_obshchii_schetchik_elektroenergii_energy_at_previous_month_start_t2') | float(0) -%}
+          {% set p3 = states('sensor.energomera_ce301_energy_at_month_start_t3') | float(0)
+                    - states('sensor.ves_dom_obshchii_schetchik_elektroenergii_energy_at_previous_month_start_t3') | float(0) -%}
+          {{ (p2 * (t1 - states('input_number.tariff_t2') | float(0))
+              + p3 * (t1 - states('input_number.tariff_t3') | float(0))) | round(2) }}
+      - name: "House savings total"
+        unique_id: house_savings_total
+        device_class: monetary
+        unit_of_measurement: "BYN"
+        icon: mdi:piggy-bank
+        state: >-
+          {% set t1 = states('input_number.tariff_t1') | float(0) -%}
+          {% set e2 = states('sensor.energomera_ce301_active_energy_t2') | float(0) -%}
+          {% set e3 = states('sensor.energomera_ce301_active_energy_t3') | float(0) -%}
+          {{ (e2 * (t1 - states('input_number.tariff_t2') | float(0))
+              + e3 * (t1 - states('input_number.tariff_t3') | float(0))) | round(2) }}
+
+sensor:
+  # --- Накопительная энергия там, где её нет --------------------------------
+  # У розетки конвектора (CUCO) есть только мощность и «энергия за месяц»,
+  # поэтому энергию накапливаем интегрированием мощности во времени.
+  # Метод left — прямоугольники: для ступенчатой мощности розетки он точнее.
+  - platform: integration
+    source: sensor.cuco_v2eur_0717_electric_power
+    name: "Attic convector energy"
+    unique_id: attic_convector_energy
+    unit_prefix: k            # из ватт в киловатты
+    unit_time: h              # и в часы → кВт·ч
+    method: left
+    round: 2
+
+  # У стиралки в списке только «за сутки» и «за месяц» и нет мощности, поэтому
+  # накопительный сенсор из них не собрать: добавьте в панель «Энергия» тот
+  # сенсор, у которого есть state_class: total_increasing, либо включите в
+  # приложении розетки накопительную энергию.
+
+  # --- Накопленные затраты по устройствам (BYN) -----------------------------
+  - platform: integration
+    source: sensor.boiler_cost_rate
+    name: "Boiler cost total"
+    unique_id: boiler_cost_total
+    unit_time: h
+    method: left
+    round: 2
+  - platform: integration
+    source: sensor.heating_cable_cost_rate
+    name: "Heating cable cost total"
+    unique_id: heating_cable_cost_total
+    unit_time: h
+    method: left
+    round: 2
+  - platform: integration
+    source: sensor.attic_convector_cost_rate
+    name: "Attic convector cost total"
+    unique_id: attic_convector_cost_total
+    unit_time: h
+    method: left
+    round: 2
+  - platform: integration
+    source: sensor.pc_cost_rate
+    name: "PC cost total"
+    unique_id: pc_cost_total
+    unit_time: h
+    method: left
+    round: 2
+
+  # --- Накопленная экономия по приборам (BYN) -------------------------------
+  - platform: integration
+    source: sensor.boiler_saving_rate
+    name: "Boiler savings total"
+    unique_id: boiler_savings_total
+    unit_time: h
+    method: left
+    round: 2
+  - platform: integration
+    source: sensor.heating_cable_saving_rate
+    name: "Heating cable savings total"
+    unique_id: heating_cable_savings_total
+    unit_time: h
+    method: left
+    round: 2
+  - platform: integration
+    source: sensor.attic_convector_saving_rate
+    name: "Attic convector savings total"
+    unique_id: attic_convector_savings_total
+    unit_time: h
+    method: left
+    round: 2
+  - platform: integration
+    source: sensor.pc_saving_rate
+    name: "PC savings total"
+    unique_id: pc_savings_total
+    unit_time: h
+    method: left
+    round: 2
+
+  # Энергия греющего кабеля: у розетки нет сенсора энергии, поэтому считаем
+  # интеграл мощности (Вт → кВт·ч). Раньше здесь по ошибке использовался сенсор
+  # ТОКА (амперы) — цифры в кВт·ч были неверными.
+  - platform: integration
+    source: sensor.rozetka_greiushchii_kabel_potrebliaemaia_moshchnost
+    name: "Heating cable energy"
+    unique_id: heating_cable_energy
+    unit_prefix: k
+    unit_time: h
+    method: left
+    round: 3
+
+utility_meter:
+  # --- Затраты по устройствам за текущий месяц ------------------------------
+  boiler_cost_month:
+    source: sensor.boiler_cost_total
+    name: "Boiler cost month"
+    cycle: monthly
+  heating_cable_cost_month:
+    source: sensor.heating_cable_cost_total
+    name: "Heating cable cost month"
+    cycle: monthly
+  attic_convector_cost_month:
+    source: sensor.attic_convector_cost_total
+    name: "Attic convector cost month"
+    cycle: monthly
+  pc_cost_month:
+    source: sensor.pc_cost_total
+    name: "PC cost month"
+    cycle: monthly
+  # --- Затраты по устройствам за текущие сутки ------------------------------
+  boiler_cost_today:
+    source: sensor.boiler_cost_total
+    name: "Boiler cost today"
+    cycle: daily
+  heating_cable_cost_today:
+    source: sensor.heating_cable_cost_total
+    name: "Heating cable cost today"
+    cycle: daily
+  attic_convector_cost_today:
+    source: sensor.attic_convector_cost_total
+    name: "Attic convector cost today"
+    cycle: daily
+  pc_cost_today:
+    source: sensor.pc_cost_total
+    name: "PC cost today"
+    cycle: daily
+  # --- Расход энергии по приборам за текущий месяц --------------------------
+  # Нужен для оценки экономии при переносе нагрузки в ночную зону T2:
+  # экономия ≈ расход × (средняя уплаченная цена − цена T2).
+  boiler_energy_month:
+    source: sensor.0xa4c138f501c578e3_energy
+    name: "Boiler energy month"
+    cycle: monthly
+  attic_convector_energy_month:
+    source: sensor.attic_convector_energy
+    name: "Attic convector energy month"
+    cycle: monthly
+  # У греющего кабеля проверьте единицу сенсора: если это амперы, а не кВт·ч,
+  # замените источник на интеграл от мощности (как у конвектора мансарда выше).
+  heating_cable_energy_month:
+    source: sensor.heating_cable_energy
+    name: "Heating cable energy month"
+    cycle: monthly
+  ev_energy_month:
+    source: sensor.ev_car_zariadnoe_ustroistvo_energiia
+    name: "EV energy month"
+    cycle: monthly
+
+  # --- Экономия по приборам за текущий месяц --------------------------------
+  boiler_saving_month:
+    source: sensor.boiler_savings_total
+    name: "Boiler saving month"
+    cycle: monthly
+  heating_cable_saving_month:
+    source: sensor.heating_cable_savings_total
+    name: "Heating cable saving month"
+    cycle: monthly
+  attic_convector_saving_month:
+    source: sensor.attic_convector_savings_total
+    name: "Attic convector saving month"
+    cycle: monthly
+  pc_saving_month:
+    source: sensor.pc_savings_total
+    name: "PC saving month"
+    cycle: monthly
+
+input_text:
+  # --- Дополнительные нерабочие дни (ММ-ДД через запятую) -------------------
+  # Счётчик знает только свои 9 фиксированных дат, а постановление относит к
+  # «дешёвым» ещё Радуницу и объявленные переносы. Впишите их сюда, если хотите
+  # считать строго по постановлению: например 04-21,04-20.
+  # Пусто — расчёт полностью совпадает с показаниями счётчика.
+  extra_nonwork_days:
+    name: "Extra non-work days"
+    max: 255
+    icon: mdi:calendar-plus
+
+  # --- Расход по дням месяца для графика в отчёте ---------------------------
+  # Строка вида "12.40,15.10,9.80,…" — по одному значению на день месяца.
+  # Заполняется автоматизацией каждый день в 23:59:30, читается 1-го числа.
+  # 31 значение по 7 символов укладывается в предел input_text (255).
+  daily_energy:
+    name: "Daily energy CSV"
+    max: 255
+    icon: mdi:chart-timeline-variant
+
+input_number:
+  # --- Снимок затрат за прошедший месяц (заполняется автоматизацией) --------
+  # Создаются как помощники «Число» с максимумом 100000 и шагом 0.01.
+  boiler_cost_last_month:
+    name: "Boiler cost last month"
+    min: 0
+    max: 100000
+    step: 0.01
+    mode: box
+    unit_of_measurement: "BYN"
+  heating_cable_cost_last_month:
+    name: "Heating cable cost last month"
+    min: 0
+    max: 100000
+    step: 0.01
+    mode: box
+    unit_of_measurement: "BYN"
+  attic_convector_cost_last_month:
+    name: "Attic convector cost last month"
+    min: 0
+    max: 100000
+    step: 0.01
+    mode: box
+    unit_of_measurement: "BYN"
+  pc_cost_last_month:
+    name: "PC cost last month"
+    min: 0
+    max: 100000
+    step: 0.01
+    mode: box
+    unit_of_measurement: "BYN"
+
+automation:
+  # --- 0. Ежедневный снимок расхода для графика по дням месяца --------------
+  - alias: "Энергия: снимок расхода за сутки"
+    id: energy_daily_energy_snapshot
+    description: >-
+      Каждый день в 23:59:30 записывает расход за прошедшие сутки в свою ячейку
+      строки input_text.daily_energy — из неё 1-го числа строится график по дням
+    triggers:
+      - trigger: time
+        at: "23:59:30"
+    actions:
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.daily_energy
+        data:
+          # Раскладываем строку "12.40,15.10,…" по дням месяца: в ячейку
+          # сегодняшнего дня кладём расход за сутки, остальные сохраняем.
+          value: >-
+            {% set day = now().day -%}
+            {% set today = states('sensor.energy_today_total') | float(0) -%}
+            {% set old = (states('input_text.daily_energy') or '').split(',') -%}
+            {% set ns = namespace(items=[]) -%}
+            {% for i in range(1, 32) -%}
+              {% set value = today if i == day else (old[i - 1] | float(0) if old | length >= i else 0) -%}
+              {% set ns.items = ns.items + ['%.2f' % value] -%}
+            {% endfor -%}
+            {{ ns.items | join(',') }}
+    mode: single
+
+  # --- 1. Снимок месячных затрат за 30 секунд до полуночи -------------------
+  - alias: "Энергия: снимок затрат в конце месяца"
+    id: energy_cost_month_snapshot
+    description: >-
+      Сохраняет затраты по устройствам за месяц до того, как utility_meter
+      сбросится в полночь
+    triggers:
+      - trigger: time
+        at: "23:59:30"
+    condition:
+      # только в последний день месяца
+      - condition: template
+        value_template: "{{ (now() + timedelta(days=1)).day == 1 }}"
+    actions:
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.boiler_cost_last_month
+        data:
+          value: "{{ states('sensor.boiler_cost_month') | float(0) }}"
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.heating_cable_cost_last_month
+        data:
+          value: "{{ states('sensor.heating_cable_cost_month') | float(0) }}"
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.attic_convector_cost_last_month
+        data:
+          value: "{{ states('sensor.attic_convector_cost_month') | float(0) }}"
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.pc_cost_last_month
+        data:
+          value: "{{ states('sensor.pc_cost_month') | float(0) }}"
+    mode: single
+
+  # --- 2. Отчёт в Telegram 1-го числа --------------------------------------
+  - alias: "Энергия: отчёт за прошлый месяц в Telegram"
+    id: energy_cost_month_report
+    description: >-
+      Отправляет затраты за прошедший месяц: всего по дому (по тарифным
+      регистрам счётчика) и по отдельным устройствам
+    triggers:
+      - trigger: time
+        at: "09:34:00"
+    condition:
+      - condition: template
+        value_template: "{{ now().day == 1 }}"
+    actions:
+      # Расход по тарифным зонам за прошлый месяц берём из сенсоров
+      # «на начало прошлого месяца» и «на начало текущего месяца» самого счётчика
+      # (ENMPE и ENMPE_PREV) — они сбрасываются не в полночь, а при смене месяца
+      # по данным счётчика, поэтому читаются в любой момент.
+      - variables:
+          e_prev_total: >-
+            {{ (states('sensor.energomera_ce301_energy_at_month_start_total') | float(0)
+                - states('sensor.ves_dom_obshchii_schetchik_elektroenergii_energy_at_previous_month_start_total') | float(0)) | round(2) }}
+          p1: "{{ states('input_number.tariff_t1') | float(0) }}"
+          p2: "{{ states('input_number.tariff_t2') | float(0) }}"
+          p3: "{{ states('input_number.tariff_t3') | float(0) }}"
+          e1: >-
+            {{ (states('sensor.energomera_ce301_energy_at_month_start_t1') | float(0)
+                - states('sensor.ves_dom_obshchii_schetchik_elektroenergii_energy_at_previous_month_start_t1') | float(0)) | round(2) }}
+          e2: >-
+            {{ (states('sensor.energomera_ce301_energy_at_month_start_t2') | float(0)
+                - states('sensor.ves_dom_obshchii_schetchik_elektroenergii_energy_at_previous_month_start_t2') | float(0)) | round(2) }}
+          e3: >-
+            {{ (states('sensor.energomera_ce301_energy_at_month_start_t3') | float(0)
+                - states('sensor.ves_dom_obshchii_schetchik_elektroenergii_energy_at_previous_month_start_t3') | float(0)) | round(2) }}
+          c_boiler: "{{ states('input_number.boiler_cost_last_month') | float(0) }}"
+          c_cable: "{{ states('input_number.heating_cable_cost_last_month') | float(0) }}"
+          c_convector: "{{ states('input_number.attic_convector_cost_last_month') | float(0) }}"
+          c_pc: "{{ states('input_number.pc_cost_last_month') | float(0) }}"
+          c_ev: "{{ states('sensor.ev_charging_cost_last_month') | float(0) }}"
+          total: "{{ (e1 * p1 + e2 * p2 + e3 * p3) | round(2) }}"
+          tracked: "{{ (c_boiler + c_cable + c_convector + c_pc + c_ev) | round(2) }}"
+          # График расхода по дням месяца: столбики из блоков. Данные берём из
+          # input_text.daily_energy, который заполняется каждый день в 23:59:30;
+          # читаем только те дни, что были в прошлом месяце.
+          chart: >-
+            {% set days = (now().replace(day=1) - timedelta(days=1)).day -%}
+            {% set raw = (states('input_text.daily_energy') or '').split(',') -%}
+            {% set ns = namespace(items=[]) -%}
+            {% for i in range(days) -%}
+              {% set ns.items = ns.items + [(raw[i] | float(0) if raw | length > i else 0)] -%}
+            {% endfor -%}
+            {% set peak = ns.items | max -%}
+            {% set bars = namespace(out=['Расход по дням, кВт·ч (' ~ (ns.items | sum | round(1)) ~ ' за месяц)']) -%}
+            {% for v in ns.items -%}
+              {% set width = ((v / peak * 18) | round(0, 'floor') | int) if peak > 0 else 0 -%}
+              {% set bars.out = bars.out + ['%02d |%s %.2f' % (loop.index, '█' * width, v)] -%}
+            {% endfor -%}
+            <pre>{{ bars.out | join('\n') }}</pre>
+      - action: telegram_bot.send_message
+        data:
+          chat_id: 123456789          # ← ваш chat_id
+          parse_mode: html
+          message: |
+            {%- from 'money.jinja' import money -%}
+            📊 <b>Электроэнергия за прошлый месяц</b>
+            Всего: <b>{{ money(total) }}</b> ({{ e_prev_total }} кВт·ч)
+
+            По тарифным зонам:
+            • T1 максимальные (17–23): {{ e1 }} кВт·ч × {{ p1 }} = {{ money((e1 * p1) | round(2)) }}
+            • T2 минимальные (23–6): {{ e2 }} кВт·ч × {{ p2 }} = {{ money((e2 * p2) | round(2)) }}
+            • T3 остальное время: {{ e3 }} кВт·ч × {{ p3 }} = {{ money((e3 * p3) | round(2)) }}
+
+            По устройствам:
+            • Бойлер: {{ money(c_boiler) }}
+            • Греющий кабель: {{ money(c_cable) }}
+            • Конвектор мансарда: {{ money(c_convector) }}
+            • Компьютер: {{ money(c_pc) }}
+            • Зарядка EV: {{ money(c_ev) }}
+            • Прочее (свет, бытовая техника): {{ money((total - tracked) | round(2)) }}
+
+            {{ chart }}
+
+            Экономия относительно пикового тарифа: за месяц
+            {{ money(states('sensor.house_savings_month') | float(0) | round(2)) }},
+            по розеткам {{ states('sensor.boiler_saving_month') | float(0) | round(2) }}
+            + {{ states('sensor.heating_cable_saving_month') | float(0) | round(2) }}
+            + {{ states('sensor.attic_convector_saving_month') | float(0) | round(2) }}
+            + {{ money(states('sensor.pc_saving_month') | float(0) | round(2)) }}.
+    mode: single
+
+  # --- 3. Мощный прибор включился в дорогой зоне ----------------------------
+  # Порог мощности у каждого прибора свой: бойлер и конвектор заметны от 700–1000 Вт,
+  # компьютер — от 250 Вт. Сообщение приходит, только если сейчас действует
+  # пиковая зона T1 (17:00–23:00) и с прошлого оповещения прошёл час, иначе
+  # термостат бойлера присылал бы сообщение при каждом включении.
+  - alias: "Энергия: мощный прибор в дорогой зоне T1"
+    id: energy_peak_device_alert
+    description: >-
+      Сообщает в Telegram, когда мощный прибор включается в пиковой зоне, и
+      показывает, сколько будет стоить час работы и сколько сэкономит перенос на ночь
+    triggers:
+      - trigger: numeric_state
+        entity_id: sensor.0xa4c138f501c578e3_power
+        above: 900
+        for: "00:02:00"
+      - trigger: numeric_state
+        entity_id: sensor.cuco_v2eur_0717_electric_power
+        above: 800
+        for: "00:02:00"
+      - trigger: numeric_state
+        entity_id: sensor.rozetka_greiushchii_kabel_potrebliaemaia_moshchnost
+        above: 500
+        for: "00:02:00"
+      - trigger: numeric_state
+        entity_id: sensor.0xa4c138a36309b33a_power
+        above: 250
+        for: "00:05:00"
+    condition:
+      # сейчас пиковая зона T1
+      - condition: template
+        value_template: "{{ now().hour >= 17 and now().hour < 23 }}"
+      # и у счётчика обычный график: в выходные и в исключённые дни весь день
+      # действует T2, поэтому беспокоиться не о чем
+      - condition: state
+        entity_id: binary_sensor.meter_free_day
+        state: "off"
+      # и с прошлого оповещения прошёл час
+      - condition: template
+        value_template: >-
+          {{ state_attr('automation.energy_peak_device_alert', 'last_triggered') is none
+             or (now() - state_attr('automation.energy_peak_device_alert', 'last_triggered')).total_seconds() > 3600 }}
+    actions:
+      - variables:
+          name: "{{ trigger.to_state.name }}"
+          power: "{{ trigger.to_state.state | float(0) | round(0) }}"
+          t1: "{{ states('input_number.tariff_t1') | float(0) }}"
+          t2: "{{ states('input_number.tariff_t2') | float(0) }}"
+          now_hour: "{{ (trigger.to_state.state | float(0) / 1000 * states('input_number.tariff_t1') | float(0)) | round(2) }}"
+          night_hour: "{{ (trigger.to_state.state | float(0) / 1000 * states('input_number.tariff_t2') | float(0)) | round(2) }}"
+          save_hour: "{{ (trigger.to_state.state | float(0) / 1000 * (states('input_number.tariff_t1') | float(0) - states('input_number.tariff_t2') | float(0))) | round(2) }}"
+      - action: telegram_bot.send_message
+        data:
+          chat_id: 123456789          # ← ваш chat_id
+          parse_mode: html
+          message: |
+            {%- from 'money.jinja' import money -%}
+            ⚡️ <b>{{ name }} работает в дорогой зоне T1</b>
+            Мощность: {{ power }} Вт, цена сейчас {{ t1 }} BYN/кВт·ч (пик 17:00–23:00).
+
+            Час работы обойдётся в {{ money(now_hour) }}, в ночной зоне T2 — {{ money(night_hour) }}.
+            Если отложить до 23:00: экономия {{ money(save_hour) }} за каждый час работы.
+    mode: single
