@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Home Assistant App](https://img.shields.io/badge/Home%20Assistant-App-41BDF5.svg)](https://www.home-assistant.io/)
-[![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](config.yaml)
+[![Version](https://img.shields.io/badge/version-1.1.1-blue.svg)](config.yaml)
 
 Приложение (add-on) для Home Assistant, которое опрашивает электросчётчик
 **Энергомера CE301(BY)** и **CE303** через TCP-шлюз (протокол IEC 61107 /

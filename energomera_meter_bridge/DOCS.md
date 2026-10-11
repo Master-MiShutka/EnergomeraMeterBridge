@@ -5,7 +5,7 @@
 (ГОСТ Р МЭК 61107-2001, режим C) с публикацией результатов в MQTT
 и автоматическим созданием сущностей.
 
-**Версия:** 1.1.0 · **Slug:** `meter_bridge` · **Архитектуры:** `aarch64`, `amd64`
+**Версия:** 1.1.1 · **Slug:** `meter_bridge` · **Архитектуры:** `aarch64`, `amd64`
 
 Документация написана по официальной инструкции по программированию счётчиков
 Энергомера CE301/CE303: сверены приложение А (форматы параметров и команд),
@@ -992,7 +992,7 @@ Assistant, поэтому сторонние приложения распрос
    Cosign и публикует в GHCR как `ghcr.io/master-mishutka/amd64-energomera-meter-bridge`
    и `…/aarch64-…`;
 3. **manifest** — объединяет их в multi-arch манифест
-   `ghcr.io/master-mishutka/energomera-meter-bridge` с тегами `1.1.0` и `latest`.
+   `ghcr.io/master-mishutka/energomera-meter-bridge` с тегами версии и `latest`.
 
 Тег образа — это `version` из `config.yaml`, поэтому повторный пуш без поднятия
 версии образ пересобирает, но не публикует (`skip-existing`): чтобы выпустить
