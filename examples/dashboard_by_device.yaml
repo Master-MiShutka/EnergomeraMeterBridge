@@ -1,0 +1,474 @@
+# ============================================================================
+#  Электроэнергия по устройствам
+#
+#  Это выгрузка рабочей панели Home Assistant в формате YAML — на случай
+#  восстановления и как пример готовой вёрстки.
+#
+#  Куда вставлять: Настройки → Панели → «+ Добавить панель» → «Новый дашборд из
+#  пустого» → открыть → ⋮ → «Редактировать панель» → ⋮ → «Raw-редактор» → вставить
+#  содержимое ниже.
+#
+#  Вкладок: 4. Сущности берутся из пакетов examples/energy_devices.yaml,
+#  examples/energy_helpers.yaml и (для вкладок зарядки) из интеграции
+#  ev_charging_costs.
+# ============================================================================
+
+title: Электроэнергия по устройствам
+views:
+- title: Сегодня
+  path: today
+  icon: mdi:cash-clock
+  cards:
+  - type: markdown
+    content: "{% set devices = [('Бойлер', 'boiler'), ('Греющий кабель', 'heating_cable'),\n                  ('Конвектор мансарда', 'attic_convector'), ('Компьютер', 'pc'),\n                  ('Зарядка EV', 'ev_charging')] -%}\n{% set ns = namespace(sum=0) -%}\n## Затраты за текущие сутки\n\n### {{ states('sensor.house_cost_today')\
+      \ | float(0) | round(2) }} BYN по дому\n\n| Устройство | Сегодня, BYN | За месяц, BYN |\n|:--|--:|--:|\n{% for label, key in devices -%}\n{% set today = states('sensor.' ~ key ~ '_cost_today') | float(0) -%}\n{% set month = states('sensor.' ~ key ~ '_cost_month') | float(0) -%}\n{% set ns.sum =\
+      \ ns.sum + today -%}\n| {{ label }} | {{ today | round(2) }} | {{ month | round(2) }} |\n{% endfor -%}\n| **Итого по устройствам** | **{{ ns.sum | round(2) }}** | | \n\nДом целиком за месяц: **{{ states('sensor.house_cost_month') | float(0) | round(2) }} BYN**,\nза прошлый месяц: {{ states('sensor.house_cost_prev_month')\
+      \ | float(0) | round(2) }} BYN.\n"
+  - type: statistics-graph
+    title: Затраты по суткам, BYN
+    chart_type: bar
+    period: day
+    days_to_show: 7
+    stat_types:
+    - change
+    entities:
+    - entity: sensor.boiler_cost_total
+      name: Бойлер
+    - entity: sensor.heating_cable_cost_total
+      name: Греющий кабель
+    - entity: sensor.attic_convector_cost_total
+      name: Конвектор мансарда
+    - entity: sensor.pc_cost_total
+      name: Компьютер
+  - type: entities
+    title: За сутки и за месяц
+    state_color: false
+    entities:
+    - entity: sensor.house_cost_today
+      name: Дом целиком, сегодня
+    - entity: sensor.house_cost_month
+      name: Дом целиком, за месяц
+    - type: divider
+    - entity: sensor.boiler_cost_today
+      name: Бойлер, сегодня
+    - entity: sensor.boiler_cost_month
+      name: Бойлер, за месяц
+    - entity: sensor.heating_cable_cost_today
+      name: Кабель, сегодня
+    - entity: sensor.heating_cable_cost_month
+      name: Кабель, за месяц
+    - entity: sensor.attic_convector_cost_today
+      name: Конвектор, сегодня
+    - entity: sensor.attic_convector_cost_month
+      name: Конвектор, за месяц
+    - entity: sensor.pc_cost_today
+      name: Компьютер, сегодня
+    - entity: sensor.pc_cost_month
+      name: Компьютер, за месяц
+  type: masonry
+  show_icon_and_title: true
+- title: Месяц
+  path: month
+  icon: mdi:calendar-month
+  cards:
+  - type: markdown
+    content: "{% set devices = [('Бойлер', 'boiler'), ('Греющий кабель', 'heating_cable'),\n                  ('Конвектор мансарда', 'attic_convector'), ('Компьютер', 'pc'),\n                  ('Зарядка EV', 'ev_charging')] -%}\n{% set ns = namespace(now=0, prev=0) -%}\n## Затраты по месяцам\n\n### {{\
+      \ states('sensor.house_cost_month') | float(0) | round(2) }} BYN с начала месяца\n\nПрошлый месяц по дому: **{{ states('sensor.house_cost_prev_month') | float(0) | round(2) }} BYN**.\n\n| Устройство | Текущий месяц, BYN | Прошлый месяц, BYN |\n|:--|--:|--:|\n{% for label, key in devices -%}\n{%\
+      \ set now = states('sensor.' ~ key ~ '_cost_month') | float(0) -%}\n{% set prev = states('sensor.' ~ key ~ '_cost_last_month') | float(states('input_number.' ~ key ~ '_cost_last_month') | float(0)) -%}\n{% set ns.now = ns.now + now -%}\n{% set ns.prev = ns.prev + prev -%}\n| {{ label }} | {{ now\
+      \ | round(2) }} | {{ prev | round(2) }} |\n{% endfor -%}\n| **Итого по устройствам** | **{{ ns.now | round(2) }}** | **{{ ns.prev | round(2) }}** |\n"
+  - type: markdown
+    content: "{% set devices = [('Бойлер', 'boiler'), ('Греющий кабель', 'heating_cable'),\n                  ('Конвектор мансарда', 'attic_convector'), ('Компьютер', 'pc'),\n                  ('Зарядка EV', 'ev_charging')] -%}\n{% set ns = namespace(month=0, total=0) -%}\n## Экономия на тарифах\n\nСчитается\
+      \ как мощность × (цена пика − действующая цена): в зоне T1 ноль,\nв T2 и T3 копится. Это «сколько не заплачено из-за того, что нагрузка\nработала не в пик», а не выписка из банка.\n\nДом целиком: **{{ states('sensor.house_savings_month') | float(0) | round(2) }} BYN**\nза текущий месяц, {{ states('sensor.house_savings_prev_month')\
+      \ | float(0) | round(2) }} BYN\nза прошлый, {{ states('sensor.house_savings_total') | float(0) | round(0) }} BYN\nза всю историю счётчика (оценка: при смене тарифов история пересчитывается\nпо новым ценам).\n\n| Прибор | За месяц, BYN | Всего, BYN |\n|:--|--:|--:|\n{% for label, key in devices -%}\n\
+      {% set month = states('sensor.' ~ key ~ '_saving_month') | float(0) -%}\n{% set total = states('sensor.' ~ key ~ '_savings_total') | float(0) -%}\n{% set ns.month = ns.month + month -%}\n{% set ns.total = ns.total + total -%}\n| {{ label }} | {{ '%.2f' % month }} | {{ '%.2f' % total }} |\n{% endfor\
+      \ -%}\n| **Итого по устройствам** | **{{ '%.2f' % ns.month }}** | **{{ '%.2f' % ns.total }}** |\n\nХотите больше — включайте таймеры: блок «Что можно сэкономить» на вкладке\n«Энергия» показывает, сколько даст перенос каждой нагрузки в ночную зону.\n"
+  - type: statistics-graph
+    title: Затраты по месяцам, BYN
+    chart_type: bar
+    period: month
+    days_to_show: 400
+    stat_types:
+    - change
+    entities:
+    - entity: sensor.boiler_cost_total
+      name: Бойлер
+    - entity: sensor.heating_cable_cost_total
+      name: Греющий кабель
+    - entity: sensor.attic_convector_cost_total
+      name: Конвектор мансарда
+    - entity: sensor.pc_cost_total
+      name: Компьютер
+  - type: statistics-graph
+    title: Экономия по месяцам, BYN
+    chart_type: bar
+    period: month
+    days_to_show: 400
+    stat_types:
+    - change
+    entities:
+    - entity: sensor.boiler_savings_total
+      name: Бойлер
+    - entity: sensor.heating_cable_savings_total
+      name: Греющий кабель
+    - entity: sensor.attic_convector_savings_total
+      name: Конвектор мансарда
+    - entity: sensor.pc_savings_total
+      name: Компьютер
+  type: masonry
+  show_icon_and_title: true
+- title: 'Энергия: расходы и экономия'
+  path: energy
+  icon: mdi:lightning-bolt
+  cards:
+  - type: markdown
+    content: "{% set hour = now().hour -%}\n{% set t1 = states('input_number.tariff_t1') | float(0) -%}\n{% set t2 = states('input_number.tariff_t2') | float(0) -%}\n{% set t3 = states('input_number.tariff_t3') | float(0) -%}\n{% set free_day = is_state('binary_sensor.meter_free_day', 'on') -%}\n{% set\
+      \ zone = 'T2' if free_day else ('T1' if hour >= 17 and hour < 23 else ('T2' if hour >= 23 or hour < 6 else 'T3')) -%}\n{% set left = namespace(h=0) -%}\n{% for i in range(1, 25) -%}\n  {% if left.h == 0 and (hour + i) % 24 in [6, 17, 23] -%}\n    {% set left.h = i -%}\n  {% endif -%}\n{% endfor\
+      \ -%}\n## Тарифы на электроэнергию\n\n{% if free_day -%}\nСегодня **выходной или праздник**: весь день действует **T2** —\n{{ states('sensor.current_electricity_price') }} BYN за кВт·ч, до конца суток.\n{% else -%}\nСейчас действует **{{ zone }}** — {{ states('sensor.current_electricity_price')\
+      \ }} BYN за кВт·ч,\nдо смены зоны {{ left.h }} ч.\n{% endif -%}\n\n| Тариф | Когда действует | Цена, BYN/кВт·ч | Сейчас |\n|:--|:--|--:|:--:|\n| **T1** — максимальные нагрузки (пик) | 17:00–23:00. Самая дорогая зона: вечером одновременно включаются плита, бойлер и обогреватели | {{ t1 }} | {{ '←\
+      \ сейчас' if zone == 'T1' else '—' }} |\n| **T2** — минимальные нагрузки (ночь) | 23:00–06:00. Самая дешёвая зона: выгодно греть бойлер, стирать и заряжать EV | {{ t2 }} | {{ '← сейчас' if zone == 'T2' else '—' }} |\n| **T3** — остальное время суток (полупик) | 06:00–17:00. Дневная зона, цена между\
+      \ T2 и T1 | {{ t3 }} | {{ '← сейчас' if zone == 'T3' else '—' }} |\n\n**Выходные и исключённые дни.** У счётчика тариф переключается сам: по\nбудням — по расписанию зон, а в субботу, воскресенье и в свои\nисключённые дни — целиком на график 2 (минимальные нагрузки). Счётчик\nразличает только день\
+      \ недели и девять своих дат: объявленные рабочими\nсубботы он считает выходными, а перенесённые выходные в будни — обычными\nднями.\nИсключённые дни в счётчике заданы фиксированно: 01.01, 02.01, 07.01,\n08.03, 01.05, 09.05, 03.07, 07.11, 25.12. В такие дни переносить\nнагрузку на ночь бессмысленно:\
+      \ она и так идёт по дешёвому тарифу.\nОпределяет день бинарный сенсор `binary_sensor.meter_free_day`;\nРадуницу и объявленные переносы (их счётчик знать не может) можно\nдобавить в `input_text.extra_nonwork_days` — тогда расчёт пойдёт строго\nпо постановлению, а не по показаниям счётчика.\n\nЭто\
+      \ тарифные регистры счётчика: он накапливает энергию отдельно по каждой\nзоне, поэтому расход и деньги по T1, T2 и T3 считаются точно, без деления\nсуммарного потребления на глаз. Цены обновляются автоматизацией из\nтарифов для населения (см. `examples/tariff_automation.yaml`), а\n`sensor.current_electricity_price`\
+      \ подставляет действующую цену по часам —\nеё используют отдельные устройства в панели «Энергия».\n\nСверьте границы зон с программированием тарифов в вашем счётчике: если\nночь у него записана, например, в T3, поменяйте подписи и порядок цен,\nиначе стоимость посчитается неверно.\n"
+  - type: markdown
+    content: "{% set t1 = states('input_number.tariff_t1') | float(0) -%}\n{% set t2 = states('input_number.tariff_t2') | float(0) -%}\n{% set ratio = (t1 / t2) | round(1) if t2 > 0 else 0 -%}\n{% set devices = [('Бойлер', 'boiler', 'sensor.0xa4c138f501c578e3_power'),\n                  ('Греющий кабель',\
+      \ 'heating_cable', 'sensor.rozetka_greiushchii_kabel_potrebliaemaia_moshchnost'),\n                  ('Конвектор мансарда', 'attic_convector', 'sensor.cuco_v2eur_0717_electric_power'),\n                  ('Зарядка EV', 'ev_charging',\n                   'sensor.ev_charging_power_kw')] -%}\n{% set\
+      \ ns = namespace(saving=0) -%}\n## Что можно сэкономить\n\n{% if t2 <= 0 -%}\nЦены на электроэнергию ещё не заполнены: нажмите кнопку **«Обновить цены на\nэлектроэнергию»** (или впишите их в `input_number.tariff_t1…t3`). После этого\nздесь появится расчёт — сколько стоит час работы каждого прибора\
+      \ и сколько\nможно сэкономить, перенеся нагрузку в ночную зону T2.\n{% else -%}\nНочная зона **T2** дешевле пика **T1** в {{ ratio }} раза ({{ t1 }} против {{ t2 }} BYN\nза кВт·ч), поэтому перенос нагрузки с вечера на ночь — самый простой способ\nснизить счёт, не отказываясь от comfortа.\n\n| Прибор\
+      \ | Час работы сейчас | Час работы в T2 | За месяц | Экономия, если всё в T2 |\n|:--|--:|--:|--:|--:|\n{% for label, key, power in devices -%}\n{% set raw = states(power) | float(0) -%}\n{% set kw = raw / 1000 if state_attr(power, 'unit_of_measurement') == 'W' else raw -%}\n{% set kwh = states('sensor.'\
+      \ ~ key ~ '_energy_month') | float(0) -%}\n{% set cost = states('sensor.' ~ key ~ '_cost_month') | float(0) -%}\n{% set avg = (cost / kwh) if kwh > 0 else 0 -%}\n{% set save = ((kwh * (avg - t2)) | round(2)) if avg > t2 else 0 -%}\n{% set ns.saving = ns.saving + save -%}\n| {{ label }} | {{ '%.3f'\
+      \ % (kw * t1) }} BYN | {{ '%.3f' % (kw * t2) }} BYN | {{ '%.1f' % kwh }} кВт·ч | до {{ '%.2f' % save }} BYN |\n{% endfor -%}\n| **Итого** | | | | **до {{ '%.2f' % ns.saving }} BYN** |\n\n**Зарядка EV**{% if is_state('binary_sensor.ev_charging_in_progress', 'on') %} — идёт зарядка{% endif %}:\n{{\
+      \ '%.2f' % (states('sensor.ev_charging_power_kw') | float(0)) }} кВт,\nстоимость текущей сессии {{ '%.2f' % (states('sensor.ev_charging_session_cost') | float(0)) }} BYN.\nЗа месяц {{ '%.1f' % (states('sensor.ev_charging_energy_month') | float(0)) }} кВт·ч\nна {{ '%.2f' % (states('sensor.ev_charging_cost_month')\
+      \ | float(0)) }} BYN;\nэкономия относительно пика — {{ '%.2f' % (states('sensor.ev_charging_saving_month') | float(0)) }} BYN.\n\nВ субботу, воскресенье и исключённые дни счётчика переносить ничего не\nнужно: весь день идёт по T2 (см. таблицу тарифов выше).\n\n**Что сделать**\n\n* бойлер — таймер\
+      \ с 23:00 до 06:00, в пик 17:00–23:00 не греть;\n* стиральную и посудомоечную машины, зарядку EV — отложенный старт на 23:00;\n* тёплый пол и греющий кабель — на ночь: бетон держит тепло до утра;\n* конвектор мансарды — включать до 17:00 или после 23:00;\n* крупные разовые дела (рендер, стирка,\
+      \ зарядка) — планировать на T2, а не на вечер.\n\nОценка «если всё в T2» — верхняя граница: часть энергии перенести нельзя\n(холодильник, освещение, готовка). Средняя уплаченная цена считается как\n«затраты прибора за месяц ÷ его расход за месяц», поэтому цифры уточняются\nпо мере накопления статистики.\n\
+      {% endif -%}\n"
+  - type: markdown
+    content: '## Расход по розеткам
+
+
+      Столбцы — расход за сутки по каждой розетке. Данные берутся из
+
+      накопительных сенсоров энергии самих розеток, поэтому история есть
+
+      ровно с того момента, как они начали записываться.
+
+      '
+  - type: statistics-graph
+    title: Расход по суткам, кВт·ч
+    chart_type: bar
+    period: day
+    days_to_show: 7
+    stat_types:
+    - change
+    entities:
+    - entity: sensor.0xa4c138f501c578e3_energy
+      name: Бойлер
+    - entity: sensor.0xa4c138a36309b33a_energy
+      name: Компьютер
+    - entity: sensor.attic_convector_energy
+      name: Конвектор мансарда
+    - entity: sensor.heating_cable_energy
+      name: Греющий кабель
+  - type: statistics-graph
+    title: Расход по месяцам, кВт·ч
+    chart_type: bar
+    period: month
+    days_to_show: 400
+    stat_types:
+    - change
+    entities:
+    - entity: sensor.0xa4c138f501c578e3_energy
+      name: Бойлер
+    - entity: sensor.0xa4c138a36309b33a_energy
+      name: Компьютер
+    - entity: sensor.attic_convector_energy
+      name: Конвектор мансарда
+  - type: entities
+    title: Текущая мощность и цена
+    entities:
+    - entity: sensor.current_electricity_price
+      name: Цена сейчас, BYN/кВт·ч
+    - type: divider
+    - entity: sensor.0xa4c138f501c578e3_power
+      name: Бойлер, Вт
+    - entity: sensor.0xa4c138a36309b33a_power
+      name: Компьютер, Вт
+    - entity: sensor.cuco_v2eur_0717_electric_power
+      name: Конвектор, Вт
+    - entity: sensor.rozetka_greiushchii_kabel_potrebliaemaia_moshchnost
+      name: Кабель, Вт
+  type: masonry
+  show_icon_and_title: true
+- title: Зарядная станция
+  path: ev-control
+  icon: mdi:ev-station
+  type: sections
+  max_columns: 4
+  sections:
+  - type: grid
+    column_span: 3
+    cards:
+    - type: heading
+      heading: Зарядка электромобиля
+      heading_style: title
+      icon: mdi:ev-station
+    - color: state
+      type: entities
+      entities:
+      - entity: sensor.ev_car_zariadnoe_ustroistvo_status
+        name: Статус станции
+      - entity: binary_sensor.ev_charging_in_progress
+        name: Идёт зарядка
+      - entity: sensor.ev_charging_power_kw
+        name: Мощность
+      - entity: sensor.rezhim_zariadki_ev
+        name: Режим
+      - entity: number.ev_car_zariadnoe_ustroistvo_charging_current
+        name: Уставка тока
+      - entity: binary_sensor.ev_car_zariadnoe_ustroistvo_problema
+        name: Авария
+      title: Станция
+      show_header_toggle: false
+    - type: entities
+      state_color: true
+      entities:
+      - entity: sensor.ev_car_zariadnoe_ustroistvo_charge
+        name: Заряжено за сессию
+      - entity: sensor.ev_charging_session_cost
+        name: Стоимость сессии
+      - entity: sensor.ev_car_zariadnoe_ustroistvo_remaining
+        name: Осталось по плану
+      - entity: sensor.ev_car_zariadnoe_ustroistvo_temperatura
+        name: Температура станции
+      title: Текущая сессия
+    - type: entities
+      state_color: true
+      entities:
+      - entity: sensor.ev_charging_cost_today
+        name: Сегодня
+      - entity: sensor.ev_charging_cost_month
+        name: За месяц
+      - entity: sensor.ev_charging_energy_month
+        name: Энергия за месяц
+      - entity: sensor.ev_charging_saving_month
+        name: Экономия за месяц
+      title: Сутки и месяц
+    - type: entities
+      state_color: true
+      entities:
+      - entity: binary_sensor.zariadka_ev_razreshena_po_tarifu
+        name: Разрешена сейчас
+      - entity: sensor.current_electricity_price
+        name: Цена сейчас
+      - entity: binary_sensor.meter_free_day
+        name: Выходной или праздник
+      - entity: input_select.ev_charging_strategy
+        name: Стратегия
+      title: Тариф
+    - type: entities
+      state_color: true
+      entities:
+      - entity: sensor.ev_charging_cost_today
+        name: Сегодня, BYN
+      - entity: sensor.ev_charging_cost_month
+        name: За месяц, BYN
+      - entity: sensor.ev_charging_cost_total
+        name: Всего, BYN
+      - entity: sensor.ev_charging_energy_month
+        name: Энергия за месяц, кВт·ч
+      - entity: sensor.ev_charging_saving_month
+        name: Экономия за месяц, BYN
+      - entity: sensor.ev_charging_savings_total
+        name: Экономия всего, BYN
+      - entity: sensor.current_electricity_price
+        name: Цена сейчас, BYN/кВт·ч
+      title: Стоимость и экономия
+    - type: entities
+      state_color: true
+      entities:
+      - entity: sensor.ev_charging_hours_charging_today
+        name: Зарядка сегодня, ч
+      - entity: sensor.ev_charging_hours_charging_month
+        name: Зарядка за месяц, ч
+      - entity: sensor.ev_charging_hours_pause_month
+        name: Пауза за месяц, ч
+      - entity: sensor.ev_charging_hours_idle_month
+        name: Простой за месяц, ч
+      - entity: sensor.ev_charging_hours_fault_month
+        name: Авария за месяц, ч
+      title: Время в состояниях
+  - type: grid
+    cards:
+    - type: heading
+      icon: mdi:cogs
+      heading: Управление станцией
+      heading_style: title
+    - type: entities
+      state_color: true
+      entities:
+      - entity: switch.ev_car_zariadnoe_ustroistvo
+        name: Зарядка
+      - entity: number.ev_car_zariadnoe_ustroistvo_charging_current
+        name: Ток зарядки (уставка)
+      - type: button
+        name: 6 А — медленно
+        icon: mdi:speedometer-slow
+        tap_action:
+          action: perform-action
+          perform_action: number.set_value
+          target:
+            entity_id: number.ev_car_zariadnoe_ustroistvo_charging_current
+          data:
+            value: 6
+      - type: button
+        name: 10 А
+        icon: mdi:speedometer-medium
+        tap_action:
+          action: perform-action
+          perform_action: number.set_value
+          target:
+            entity_id: number.ev_car_zariadnoe_ustroistvo_charging_current
+          data:
+            value: 10
+      - type: button
+        name: 13 А
+        icon: mdi:speedometer
+        tap_action:
+          action: perform-action
+          perform_action: number.set_value
+          target:
+            entity_id: number.ev_car_zariadnoe_ustroistvo_charging_current
+          data:
+            value: 13
+      - type: button
+        name: 16 А — максимум станции
+        icon: mdi:speedometer
+        tap_action:
+          action: perform-action
+          perform_action: number.set_value
+          target:
+            entity_id: number.ev_car_zariadnoe_ustroistvo_charging_current
+          data:
+            value: 16
+      - entity: select.ev_car_zariadnoe_ustroistvo_rezhim_zariadki
+        name: Режим зарядки
+      - entity: number.ev_car_zariadnoe_ustroistvo_fixed_charge
+        name: Зарядить, кВт·ч
+      - entity: sensor.ev_car_zariadnoe_ustroistvo_remaining
+        name: Осталось зарядить
+      - entity: binary_sensor.ev_car_zariadnoe_ustroistvo_problema
+        name: Авария
+      - entity: switch.ev_car_zariadnoe_ustroistvo_real_time_updates
+        name: Обновления в реальном времени
+      - type: button
+        name: Сбросить счётчик станции
+        icon: mdi:counter
+        tap_action:
+          action: perform-action
+          perform_action: button.press
+          target:
+            entity_id: button.ev_car_zariadnoe_ustroistvo_clear_energy
+          confirmation:
+            text: Сбросить накопленную энергию станции? Учёт затрат продолжит считать от нового значения.
+      title: Управление станцией
+    - type: entities
+      state_color: true
+      entities:
+      - entity: script.ev_charge_10
+        name: Зарядить 10 кВт·ч
+      - entity: script.ev_charge_20
+        name: Зарядить 20 кВт·ч
+      - entity: script.ev_charge_80
+        name: Заряжать до 80% к утру
+      - entity: script.ev_charge_100
+        name: Заряжать до 100% к утру
+      - entity: script.ev_charge_reset
+        name: Снять план
+      - entity: input_number.ev_battery_capacity
+        name: Ёмкость батареи
+      - entity: input_number.ev_battery_level
+        name: Текущий заряд
+      title: Задачи зарядки
+    - type: entities
+      state_color: true
+      entities:
+      - entity: input_select.ev_charging_strategy
+        name: Стратегия
+      - entity: binary_sensor.zariadka_ev_razreshena_po_tarifu
+        name: Разрешена сейчас
+      - entity: sensor.current_electricity_price
+        name: Цена сейчас
+      - entity: binary_sensor.meter_free_day
+        name: Выходной или праздник
+      - entity: automation.zariadka_ev_razreshenie_po_tarifu
+        name: 'Автоматика: разрешение'
+      - entity: automation.zariadka_ev_opoveshchenie_o_tarife
+        name: 'Автоматика: оповещение'
+      title: Зарядка по тарифу
+    column_span: 3
+  - type: grid
+    cards: []
+  - type: grid
+    cards:
+    - type: heading
+      icon: mdi:cash
+      heading: Затраты
+      heading_style: title
+    - type: statistics-graph
+      title: Затраты на зарядку по суткам, BYN
+      entities:
+      - entity: sensor.ev_charging_cost_total
+        name: Стоимость зарядок
+      stat_types:
+      - change
+      chart_type: bar
+      period: day
+      days_to_show: 7
+    - type: statistics-graph
+      title: Затраты и экономия по месяцам, BYN
+      entities:
+      - entity: sensor.ev_charging_cost_total
+        name: Стоимость зарядок
+      - entity: sensor.ev_charging_savings_total
+        name: Экономия
+      stat_types:
+      - change
+      chart_type: bar
+      period: month
+      days_to_show: 400
+    column_span: 4
+  - type: grid
+    cards:
+    - type: heading
+      icon: mdi:ev-station
+      heading_style: title
+      heading: Энергия и мощность
+    - type: statistics-graph
+      title: Энергия зарядок по суткам, кВт·ч
+      entities:
+      - entity: sensor.ev_car_zariadnoe_ustroistvo_energiia
+        name: Энергия
+      stat_types:
+      - change
+      chart_type: bar
+      period: day
+      days_to_show: 7
+    - type: statistics-graph
+      title: Мощность зарядки, кВт
+      entities:
+      - entity: sensor.ev_car_zariadnoe_ustroistvo_total_power
+        name: Мощность
+      stat_types:
+      - max
+      chart_type: line
+      period: hour
+      days_to_show: 1
+    column_span: 2
+  badges:
+  - type: entity
+    entity: sensor.ev_car_zariadnoe_ustroistvo_connection
+    show_name: true
+  show_icon_and_title: true
+  cards: []
