@@ -1,0 +1,140 @@
+# ============================================================================
+#  Ветви учёта электроэнергии
+#
+#  Структура (по вашей схеме подключения):
+#
+#    Общий счётчик электроэнергии
+#      ├ Счётчик на жилую часть дома ....... ветвь «Жилой дом»
+#      │    └ розетки в пространствах Спальня, Гостиная, Зал, Котельная
+#      ├ Gran-Electro СС301 ................ ветвь «Мастерская»
+#      │    └ розетки в пространствах Подвал, Мастерская 1 этаж, Мансарда
+#      └ Счётчик кухня (планируется) ....... ветвь «Кухня»
+#           └ розетки в пространстве Кухня
+#
+#  Для каждой ветви считаются:
+#    * «покрыто розетками» — сумма месячной энергии всех розеток ветви;
+#    * «прочие» — показания ветвевого счётчика минус покрытое, то есть то,
+#      что в ветви ещё не оснащено мониторингом. Это и есть «потребители ...»
+#      из схемы; число показывает, куда имеет смысл добавить розетки.
+#
+#  Розетки определяются по пространству устройства, поэтому новая розетка
+#  попадает в нужную ветвь сразу после назначения пространства. Для четырёх
+#  розеток, описанных вручную (бойлер, кабель, конвектор, компьютер), задано
+#  соответствие по имени сенсора — у них нет устройства, а значит и пространства.
+# ============================================================================
+
+utility_meter:
+  branch_living_meter_month:
+    source: sensor.schetchik_na_dom_energy
+    cycle: monthly
+    name: "Жилой дом: счётчик за месяц"
+  branch_workshop_meter_month:
+    source: sensor.gran_electro_ss301_energy_active_import
+    cycle: monthly
+    name: "Мастерская: счётчик за месяц"
+
+template:
+  - sensor:
+      # --- ветвь «Жилой дом» --------------------------------------------------
+      - name: "Ветвь Жилой дом: покрыто розетками"
+        unique_id: branch_living_monitored
+        unit_of_measurement: "kWh"
+        icon: mdi:home-lightning-bolt
+        state: >-
+          {% set prefix = {'boiler': 'Кухня', 'heating_cable': 'Жилой дом', 'pc': 'Жилой дом',
+                           'attic_convector': 'Мастерская', 'ev_charging': 'Мастерская'} -%}
+          {% set by_area = {'Спальня': 'Жилой дом', 'Гостиная': 'Жилой дом', 'Зал': 'Жилой дом',
+                            'Котельная': 'Жилой дом', 'Подвал': 'Мастерская',
+                            'Мастерская 1 этаж': 'Мастерская', 'Мансарда': 'Мастерская',
+                            'Кухня': 'Кухня', 'Жилой дом': 'Жилой дом', 'Мастерская': 'Мастерская'} -%}
+          {% set ns = namespace(v=0) -%}
+          {% for entity in states.sensor | selectattr('entity_id', 'match', '.*_energy_month$')
+                                          | map(attribute='entity_id') -%}
+            {% set slug = entity.split('.')[1] | replace('_energy_month', '') -%}
+            {% set branch = prefix.get(slug) or by_area.get(area_name(entity)) -%}
+            {% if branch == 'Жилой дом' -%}
+              {% set ns.v = ns.v + states(entity) | float(0) -%}
+            {% endif -%}
+          {% endfor -%}
+          {{ ns.v | round(2) }}
+      - name: "Ветвь Жилой дом: прочие"
+        unique_id: branch_living_other
+        unit_of_measurement: "kWh"
+        icon: mdi:help-circle-outline
+        state: >-
+          {% set meter = states('sensor.branch_living_meter_month') | float(0) -%}
+          {% set covered = states('sensor.vetv_zhiloi_dom_pokryto_rozetkami') | float(0) -%}
+          {{ [meter - covered, 0] | max | round(2) }}
+
+      # --- ветвь «Мастерская» -------------------------------------------------
+      - name: "Ветвь Мастерская: покрыто розетками"
+        unique_id: branch_workshop_monitored
+        unit_of_measurement: "kWh"
+        icon: mdi:tools
+        state: >-
+          {% set prefix = {'boiler': 'Кухня', 'heating_cable': 'Жилой дом', 'pc': 'Жилой дом',
+                           'attic_convector': 'Мастерская', 'ev_charging': 'Мастерская'} -%}
+          {% set by_area = {'Спальня': 'Жилой дом', 'Гостиная': 'Жилой дом', 'Зал': 'Жилой дом',
+                            'Котельная': 'Жилой дом', 'Подвал': 'Мастерская',
+                            'Мастерская 1 этаж': 'Мастерская', 'Мансарда': 'Мастерская',
+                            'Кухня': 'Кухня', 'Жилой дом': 'Жилой дом', 'Мастерская': 'Мастерская'} -%}
+          {% set ns = namespace(v=0) -%}
+          {% for entity in states.sensor | selectattr('entity_id', 'match', '.*_energy_month$')
+                                          | map(attribute='entity_id') -%}
+            {% set slug = entity.split('.')[1] | replace('_energy_month', '') -%}
+            {% set branch = prefix.get(slug) or by_area.get(area_name(entity)) -%}
+            {% if branch == 'Мастерская' -%}
+              {% set ns.v = ns.v + states(entity) | float(0) -%}
+            {% endif -%}
+          {% endfor -%}
+          {{ ns.v | round(2) }}
+      - name: "Ветвь Мастерская: прочие"
+        unique_id: branch_workshop_other
+        unit_of_measurement: "kWh"
+        icon: mdi:help-circle-outline
+        state: >-
+          {% set meter = states('sensor.branch_workshop_meter_month') | float(0) -%}
+          {% set covered = states('sensor.vetv_masterskaia_pokryto_rozetkami') | float(0) -%}
+          {{ [meter - covered, 0] | max | round(2) }}
+
+      # --- ветвь «Кухня» (счётчик планируется) --------------------------------
+      - name: "Ветвь Кухня: покрыто розетками"
+        unique_id: branch_kitchen_monitored
+        unit_of_measurement: "kWh"
+        icon: mdi:stove
+        state: >-
+          {% set prefix = {'boiler': 'Кухня', 'heating_cable': 'Жилой дом', 'pc': 'Жилой дом',
+                           'attic_convector': 'Мастерская', 'ev_charging': 'Мастерская'} -%}
+          {% set by_area = {'Спальня': 'Жилой дом', 'Гостиная': 'Жилой дом', 'Зал': 'Жилой дом',
+                            'Котельная': 'Жилой дом', 'Подвал': 'Мастерская',
+                            'Мастерская 1 этаж': 'Мастерская', 'Мансарда': 'Мастерская',
+                            'Кухня': 'Кухня', 'Жилой дом': 'Жилой дом', 'Мастерская': 'Мастерская'} -%}
+          {% set ns = namespace(v=0) -%}
+          {% for entity in states.sensor | selectattr('entity_id', 'match', '.*_energy_month$')
+                                          | map(attribute='entity_id') -%}
+            {% set slug = entity.split('.')[1] | replace('_energy_month', '') -%}
+            {% set branch = prefix.get(slug) or by_area.get(area_name(entity)) -%}
+            {% if branch == 'Кухня' -%}
+              {% set ns.v = ns.v + states(entity) | float(0) -%}
+            {% endif -%}
+          {% endfor -%}
+          {{ ns.v | round(2) }}
+
+      # --- дом целиком --------------------------------------------------------
+      - name: "Дом: покрыто розетками"
+        unique_id: house_monitored
+        unit_of_measurement: "kWh"
+        icon: mdi:home-lightning-bolt-outline
+        state: >-
+          {% set branches = ['sensor.vetv_zhiloi_dom_pokryto_rozetkami',
+                             'sensor.vetv_masterskaia_pokryto_rozetkami',
+                             'sensor.vetv_kukhnia_pokryto_rozetkami'] -%}
+          {{ branches | map('states') | map('float', 0) | sum | round(2) }}
+      - name: "Дом: прочие (не оснащено)"
+        unique_id: house_other
+        unit_of_measurement: "kWh"
+        icon: mdi:help-circle-outline
+        state: >-
+          {% set total = states('sensor.energomera_ce301_potreblenie_e_e_za_mesiats') | float(0) -%}
+          {% set covered = states('sensor.dom_pokryto_rozetkami') | float(0) -%}
+          {{ [total - covered, 0] | max | round(2) }}
