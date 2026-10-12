@@ -1,0 +1,41 @@
+# ============================================================================
+#  Инструменты учёта электроэнергии
+#
+#  shell_command запускает генератор блоков учёта для розеток с мониторингом,
+#  скрипт обновляет список и перезагружает шаблоны, кнопка в панели дергает скрипт.
+#
+#  Генератор: /config/tools/energy_plugs.py
+#    * находит розетки (устройство с сенсором мощности и сенсором энергии);
+#    * пропускает те, что уже описаны вручную в energy_devices.yaml;
+#    * копирует структуру блока бойлера и подставляет данные новой розетки;
+#    * пишет /config/packages/energy/energy_plugs.yaml.
+#
+#  Состояния читаются из core.restore_state — токен API внутри контейнера
+#  недоступен, а атрибуты (device_class, единицы) там есть.
+# ============================================================================
+
+shell_command:
+  generate_energy_plugs: >-
+    sh -c 'python3 /config/tools/energy_plugs.py 2>&1 | tail -c 1500'
+
+script:
+  energy_plugs_refresh:
+    alias: "Розетки: обновить список учёта"
+    icon: mdi:power-plug-plus
+    description: Находит розетки с мониторингом и дописывает блоки учёта
+    sequence:
+      - action: shell_command.generate_energy_plugs
+        response_variable: plugs_result
+      - delay:
+          seconds: 2
+      - action: template.reload
+      - delay:
+          seconds: 3
+      - action: persistent_notification.create
+        data:
+          title: "Учёт по розеткам обновлён"
+          notification_id: energy_plugs
+          message: >-
+            {{ plugs_result.stdout if plugs_result is defined and plugs_result.stdout
+               else 'Готово. Если новые сенсоры не появились — перезапустите Home Assistant.' }}
+    mode: single

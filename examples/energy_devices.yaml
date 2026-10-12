@@ -571,7 +571,7 @@ automation:
           c_pc: "{{ states('input_number.pc_cost_last_month') | float(0) }}"
           c_ev: "{{ states('sensor.ev_charging_cost_last_month') | float(0) }}"
           total: "{{ (e1 * p1 + e2 * p2 + e3 * p3) | round(2) }}"
-          tracked: "{{ (c_boiler + c_cable + c_convector + c_pc + c_ev) | round(2) }}"
+          tracked: "{{ states.sensor | selectattr('entity_id', 'match', '.*_cost_month$') | rejectattr('entity_id', 'match', 'sensor\\.(house|gran|obshchii|energomera)') | map(attribute='state') | map('float', 0) | sum | round(2) }}"
           # График расхода по дням месяца: столбики из блоков. Данные берём из
           # input_text.daily_energy, который заполняется каждый день в 23:59:30;
           # читаем только те дни, что были в прошлом месяце.
@@ -604,11 +604,10 @@ automation:
             • T3 остальное время: {{ e3 }} кВт·ч × {{ p3 }} = {{ money((e3 * p3) | round(2)) }}
 
             По устройствам:
-            • Бойлер: {{ money(c_boiler) }}
-            • Греющий кабель: {{ money(c_cable) }}
-            • Конвектор мансарда: {{ money(c_convector) }}
-            • Компьютер: {{ money(c_pc) }}
-            • Зарядка EV: {{ money(c_ev) }}
+                        {% for entity in states.sensor | selectattr('entity_id', 'match', '.*_cost_month$') | rejectattr('entity_id', 'match', 'sensor\\.(house|gran|obshchii|energomera)') | map(attribute='entity_id') | sort -%}
+            • {{ state_attr(entity, 'friendly_name') | replace(' cost month', '') }}: {{ money(states(entity)) }}
+            {% endfor -%}
+
             • Прочее (свет, бытовая техника): {{ money((total - tracked) | round(2)) }}
 
             {{ chart }}
