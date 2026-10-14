@@ -12,3 +12,4 @@ _source/
 .DS_Store
 Thumbs.db
 *.swp
+.tmp/
