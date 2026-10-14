@@ -1,125 +1,619 @@
 # ============================================================================
 #  Электроэнергия по устройствам
 #
-#  Это выгрузка рабочей панели Home Assistant в формате YAML — на случай
-#  восстановления и как пример готовой вёрстки.
+#  Выгрузка рабочей панели Home Assistant в формате YAML — для восстановления
+#  и как пример готовой вёрстки. Куда вставлять: Настройки → Панели →
+#  «+ Добавить панель» → «Новый дашборд из пустого» → ⋮ → «Редактировать панель»
+#  → ⋮ → «Raw-редактор».
 #
-#  Куда вставлять: Настройки → Панели → «+ Добавить панель» → «Новый дашборд из
-#  пустого» → открыть → ⋮ → «Редактировать панель» → ⋮ → «Raw-редактор» → вставить
-#  содержимое ниже.
-#
-#  Вкладок: 4. Сущности берутся из пакетов examples/energy_devices.yaml,
-#  examples/energy_helpers.yaml и (для вкладок зарядки) из интеграции
-#  ev_charging_costs.
+#  Вкладок: 6. Сущности — из пакетов examples/energy_*.yaml, вкладка
+#  «Зарядная станция» использует интеграцию ev_charging_costs, карточки потока
+#  требуют energy-horizon-card и sankey-chart (см. configuration.yaml).
 # ============================================================================
 
 title: Электроэнергия по устройствам
 views:
+- type: sections
+  path: mgnovennye-znacheniia
+  title: Мгновенные значения
+  icon: mdi:gauge
+  show_icon_and_title: true
+  cards: []
+  sections:
+  - type: grid
+    cards:
+    - type: entities
+      title: Ввод в дом
+      entities:
+      - entity: sensor.energomera_ce301_active_power
+        name: Активная мощность
+      - entity: sensor.energomera_ce301_voltage_a
+        name: Напряжение A
+      - entity: sensor.energomera_ce301_voltage_b
+        name: Напряжение B
+      - entity: sensor.energomera_ce301_voltage_c
+        name: Напряжение C
+      - entity: sensor.energomera_ce301_current_a
+        name: Ток A
+      - entity: sensor.energomera_ce301_current_b
+        name: Ток B
+      - entity: sensor.energomera_ce301_current_c
+        name: Ток C
+      show_header_toggle: false
+    - type: entities
+      entities:
+      - entity: sensor.gran_electro_ss301_aktivnaia_moshchnost_summa
+        name: Активная мощность
+      - entity: sensor.gran_electro_ss301_napriazhenie_faza_a
+        name: Напряжение A
+      - entity: sensor.gran_electro_ss301_napriazhenie_faza_b
+        name: Напряжение B
+      - entity: sensor.gran_electro_ss301_napriazhenie_faza_c
+        name: Напряжение C
+      - entity: sensor.gran_electro_ss301_tok_faza_a
+        name: Ток A
+      - entity: sensor.gran_electro_ss301_tok_faza_b
+        name: Ток B
+      - entity: sensor.gran_electro_ss301_tok_faza_c
+        name: Ток C
+      - entity: sensor.gran_electro_ss301_koef_moshchnosti_summa
+        name: cosφ
+      show_header_toggle: false
+      title: Мастерская и гараж
+    - type: entities
+      entities:
+      - entity: sensor.schetchik_na_dom_power
+        name: Активная мощность
+      - entity: sensor.schetchik_na_dom_voltage
+        name: Напряжение
+      - entity: sensor.schetchik_na_dom_current
+        name: Ток
+      - entity: sensor.schetchik_na_dom_power_factor
+        name: cosφ
+      show_header_toggle: false
+      title: Жилой дом
+    - type: heading
+      icon: mdi:fridge
+      heading: Летняя кухня
+      heading_style: title
+    column_span: 4
+  max_columns: 4
 - title: Сегодня
   path: today
   icon: mdi:cash-clock
+  cards: []
+  type: sections
+  show_icon_and_title: true
+  sections:
+  - type: grid
+    cards:
+    - type: heading
+      heading: Затраты
+      heading_style: title
+      icon: mdi:account-cash
+    - type: markdown
+      content: "{% set devices = [('Бойлер', 'boiler'), ('Греющий кабель', 'heating_cable'),\n                  ('Конвектор мансарда', 'attic_convector'), ('Компьютер', 'pc'),\n                  ('Зарядка EV', 'ev_charging')] -%}\n{% set ns = namespace(sum=0) -%}\n## Затраты за текущие сутки\n\n### {{\
+        \ states('sensor.house_cost_today') | float(0) | round(2) }} BYN по дому\n\n| Устройство | Сегодня, BYN | За месяц, BYN |\n|:--|--:|--:|\n{% for label, key in devices -%}\n{% set today = states('sensor.' ~ key ~ '_cost_today') | float(0) -%}\n{% set month = states('sensor.' ~ key ~ '_cost_month')\
+        \ | float(0) -%}\n{% set ns.sum = ns.sum + today -%}\n| {{ label }} | {{ today | round(2) }} | {{ month | round(2) }} |\n{% endfor -%}\n| **Итого по устройствам** | **{{ ns.sum | round(2) }}** | | \n\nДом целиком за месяц: **{{ states('sensor.house_cost_month') | float(0) | round(2) }} BYN**,\n\
+        за прошлый месяц: {{ states('sensor.house_cost_prev_month') | float(0) | round(2) }} BYN.\n"
+    - type: statistics-graph
+      title: Затраты по суткам, BYN
+      chart_type: bar
+      period: day
+      days_to_show: 7
+      stat_types:
+      - change
+      entities:
+      - entity: sensor.boiler_cost_total
+        name: Бойлер
+      - entity: sensor.heating_cable_cost_total
+        name: Греющий кабель
+      - entity: sensor.attic_convector_cost_total
+        name: Конвектор мансарда
+      - entity: sensor.pc_cost_total
+        name: Компьютер
+    - color: none
+      type: entities
+      title: За сутки
+      entities:
+      - entity: sensor.house_cost_today
+        name: Дом целиком, сегодня
+      - type: divider
+      - entity: sensor.boiler_cost_today
+        name: Бойлер, сегодня
+      - entity: sensor.heating_cable_cost_today
+        name: Кабель, сегодня
+      - entity: sensor.attic_convector_cost_today
+        name: Конвектор, сегодня
+      - entity: sensor.pc_cost_today
+        name: Компьютер, сегодня
+    column_span: 3
+  - type: grid
+    cards:
+    - type: heading
+      heading: Потребление
+      heading_style: title
+      icon: mdi:home-lightning-bolt
+    - type: markdown
+      content: '{% set t = [(''T1'', ''t1''), (''T2'', ''t2''), (''T3'', ''t3'')] -%}
+
+        {% set ns = namespace(cost=0) -%}
+
+        ## Текущие сутки
+
+
+        ### {{ states(''sensor.energy_today_total'') | float(0) | round(2) }} кВт·ч
+
+
+        | Тариф | Расход, кВт·ч | Цена за кВт·ч | Стоимость |
+
+        |:--|--:|--:|--:|
+
+        {% for label, key in t -%}
+
+        {% set e = states(''sensor.energy_today_'' ~ key) | float(0) -%}
+
+        {% set p = states(''input_number.tariff_'' ~ key) | float(0) -%}
+
+        {% set ns.cost = ns.cost + e * p -%}
+
+        | {{ label }} | {{ e | round(2) }} | {{ p }} | {{ (e * p) | round(2) }} |
+
+        {% endfor -%}
+
+        | **Итого** | **{{ states(''sensor.energy_today_total'') | float(0) | round(2) }}** | | **{{ ns.cost | round(2) }}** |
+
+        '
+  - type: grid
+    cards:
+    - type: statistics-graph
+      title: Расход по часам
+      chart_type: bar
+      period: hour
+      days_to_show: 1
+      stat_types:
+      - change
+      entities:
+      - entity: sensor.energomera_ce301_active_energy_t1
+        name: T1
+      - entity: sensor.energomera_ce301_active_energy_t2
+        name: T2
+      - entity: sensor.energomera_ce301_active_energy_t3
+        name: T3
+      grid_options:
+        columns: full
+    column_span: 4
+  - type: grid
+    cards:
+    - type: heading
+      heading: Новый раздел
+  - type: grid
+    column_span: 4
+    cards:
+    - type: custom:energy-horizon-card
+      entity: sensor.dom_raskhod_po_schetchiku_vsego
+      comparison_preset: year_over_year
+      show_forecast: true
+      precision: 2
+      force_prefix: auto
+  max_columns: 4
+- title: Предыдущие 7 суток
+  path: last-7-days
+  icon: mdi:chart-bar
   cards:
   - type: markdown
-    content: "{% set devices = [('Бойлер', 'boiler'), ('Греющий кабель', 'heating_cable'),\n                  ('Конвектор мансарда', 'attic_convector'), ('Компьютер', 'pc'),\n                  ('Зарядка EV', 'ev_charging')] -%}\n{% set ns = namespace(sum=0) -%}\n## Затраты за текущие сутки\n\n### {{ states('sensor.house_cost_today')\
-      \ | float(0) | round(2) }} BYN по дому\n\n| Устройство | Сегодня, BYN | За месяц, BYN |\n|:--|--:|--:|\n{% for label, key in devices -%}\n{% set today = states('sensor.' ~ key ~ '_cost_today') | float(0) -%}\n{% set month = states('sensor.' ~ key ~ '_cost_month') | float(0) -%}\n{% set ns.sum =\
-      \ ns.sum + today -%}\n| {{ label }} | {{ today | round(2) }} | {{ month | round(2) }} |\n{% endfor -%}\n| **Итого по устройствам** | **{{ ns.sum | round(2) }}** | | \n\nДом целиком за месяц: **{{ states('sensor.house_cost_month') | float(0) | round(2) }} BYN**,\nза прошлый месяц: {{ states('sensor.house_cost_prev_month')\
-      \ | float(0) | round(2) }} BYN.\n"
+    content: '{% set t = [(''T1'', ''t1''), (''T2'', ''t2''), (''T3'', ''t3'')] -%}
+
+      {% set ns = namespace(cost=0) -%}
+
+      ## Предыдущие 7 суток
+
+
+      ### {{ states(''sensor.energy_last_7_days_total'') | float(0) | round(2) }} кВт·ч
+
+
+      | Тариф | Расход, кВт·ч | Цена за кВт·ч | Стоимость |
+
+      |:--|--:|--:|--:|
+
+      {% for label, key in t -%}
+
+      {% set e = states(''sensor.energy_last_7_days_'' ~ key) | float(0) -%}
+
+      {% set p = states(''input_number.tariff_'' ~ key) | float(0) -%}
+
+      {% set ns.cost = ns.cost + e * p -%}
+
+      | {{ label }} | {{ e | round(2) }} | {{ p }} | {{ (e * p) | round(2) }} |
+
+      {% endfor -%}
+
+      | **Итого** | **{{ states(''sensor.energy_last_7_days_total'') | float(0) | round(2) }}** | | **{{ ns.cost | round(2) }}** |
+
+
+      Столбцы — расход за сутки по тарифам; последний столбец — текущие,
+
+      ещё не завершённые сутки.
+
+      '
   - type: statistics-graph
-    title: Затраты по суткам, BYN
+    title: Расход по суткам за последние 7 суток
     chart_type: bar
     period: day
     days_to_show: 7
     stat_types:
     - change
     entities:
-    - entity: sensor.boiler_cost_total
-      name: Бойлер
-    - entity: sensor.heating_cable_cost_total
-      name: Греющий кабель
-    - entity: sensor.attic_convector_cost_total
-      name: Конвектор мансарда
-    - entity: sensor.pc_cost_total
-      name: Компьютер
-  - type: entities
-    title: За сутки и за месяц
-    state_color: false
+    - entity: sensor.energomera_ce301_active_energy_t1
+      name: T1
+    - entity: sensor.energomera_ce301_active_energy_t2
+      name: T2
+    - entity: sensor.energomera_ce301_active_energy_t3
+      name: T3
+  - type: statistics-graph
+    title: Всего за сутки (все тарифы)
+    chart_type: bar
+    period: day
+    days_to_show: 7
+    stat_types:
+    - change
     entities:
-    - entity: sensor.house_cost_today
-      name: Дом целиком, сегодня
-    - entity: sensor.house_cost_month
-      name: Дом целиком, за месяц
-    - type: divider
-    - entity: sensor.boiler_cost_today
-      name: Бойлер, сегодня
-    - entity: sensor.boiler_cost_month
-      name: Бойлер, за месяц
-    - entity: sensor.heating_cable_cost_today
-      name: Кабель, сегодня
-    - entity: sensor.heating_cable_cost_month
-      name: Кабель, за месяц
-    - entity: sensor.attic_convector_cost_today
-      name: Конвектор, сегодня
-    - entity: sensor.attic_convector_cost_month
-      name: Конвектор, за месяц
-    - entity: sensor.pc_cost_today
-      name: Компьютер, сегодня
-    - entity: sensor.pc_cost_month
-      name: Компьютер, за месяц
+    - entity: sensor.energomera_ce301_active_energy_total
+      name: Все тарифы
   type: masonry
   show_icon_and_title: true
+  badges:
+  - type: entity
+    show_name: true
+    show_state: false
+    show_icon: true
+    name: Счётчик на вводе
+    entity: sensor.gran_electro_ss301_aktivnaia_moshchnost_summa
+    icon: mdi:meter-electric
 - title: Месяц
-  path: month
   icon: mdi:calendar-month
-  cards:
-  - type: markdown
-    content: "{% set devices = [('Бойлер', 'boiler'), ('Греющий кабель', 'heating_cable'),\n                  ('Конвектор мансарда', 'attic_convector'), ('Компьютер', 'pc'),\n                  ('Зарядка EV', 'ev_charging')] -%}\n{% set ns = namespace(now=0, prev=0) -%}\n## Затраты по месяцам\n\n### {{\
-      \ states('sensor.house_cost_month') | float(0) | round(2) }} BYN с начала месяца\n\nПрошлый месяц по дому: **{{ states('sensor.house_cost_prev_month') | float(0) | round(2) }} BYN**.\n\n| Устройство | Текущий месяц, BYN | Прошлый месяц, BYN |\n|:--|--:|--:|\n{% for label, key in devices -%}\n{%\
-      \ set now = states('sensor.' ~ key ~ '_cost_month') | float(0) -%}\n{% set prev = states('sensor.' ~ key ~ '_cost_last_month') | float(states('input_number.' ~ key ~ '_cost_last_month') | float(0)) -%}\n{% set ns.now = ns.now + now -%}\n{% set ns.prev = ns.prev + prev -%}\n| {{ label }} | {{ now\
-      \ | round(2) }} | {{ prev | round(2) }} |\n{% endfor -%}\n| **Итого по устройствам** | **{{ ns.now | round(2) }}** | **{{ ns.prev | round(2) }}** |\n"
-  - type: markdown
-    content: "{% set devices = [('Бойлер', 'boiler'), ('Греющий кабель', 'heating_cable'),\n                  ('Конвектор мансарда', 'attic_convector'), ('Компьютер', 'pc'),\n                  ('Зарядка EV', 'ev_charging')] -%}\n{% set ns = namespace(month=0, total=0) -%}\n## Экономия на тарифах\n\nСчитается\
-      \ как мощность × (цена пика − действующая цена): в зоне T1 ноль,\nв T2 и T3 копится. Это «сколько не заплачено из-за того, что нагрузка\nработала не в пик», а не выписка из банка.\n\nДом целиком: **{{ states('sensor.house_savings_month') | float(0) | round(2) }} BYN**\nза текущий месяц, {{ states('sensor.house_savings_prev_month')\
-      \ | float(0) | round(2) }} BYN\nза прошлый, {{ states('sensor.house_savings_total') | float(0) | round(0) }} BYN\nза всю историю счётчика (оценка: при смене тарифов история пересчитывается\nпо новым ценам).\n\n| Прибор | За месяц, BYN | Всего, BYN |\n|:--|--:|--:|\n{% for label, key in devices -%}\n\
-      {% set month = states('sensor.' ~ key ~ '_saving_month') | float(0) -%}\n{% set total = states('sensor.' ~ key ~ '_savings_total') | float(0) -%}\n{% set ns.month = ns.month + month -%}\n{% set ns.total = ns.total + total -%}\n| {{ label }} | {{ '%.2f' % month }} | {{ '%.2f' % total }} |\n{% endfor\
-      \ -%}\n| **Итого по устройствам** | **{{ '%.2f' % ns.month }}** | **{{ '%.2f' % ns.total }}** |\n\nХотите больше — включайте таймеры: блок «Что можно сэкономить» на вкладке\n«Энергия» показывает, сколько даст перенос каждой нагрузки в ночную зону.\n"
-  - type: statistics-graph
-    title: Затраты по месяцам, BYN
-    chart_type: bar
-    period: month
-    days_to_show: 400
-    stat_types:
-    - change
-    entities:
-    - entity: sensor.boiler_cost_total
-      name: Бойлер
-    - entity: sensor.heating_cable_cost_total
-      name: Греющий кабель
-    - entity: sensor.attic_convector_cost_total
-      name: Конвектор мансарда
-    - entity: sensor.pc_cost_total
-      name: Компьютер
-  - type: statistics-graph
-    title: Экономия по месяцам, BYN
-    chart_type: bar
-    period: month
-    days_to_show: 400
-    stat_types:
-    - change
-    entities:
-    - entity: sensor.boiler_savings_total
-      name: Бойлер
-    - entity: sensor.heating_cable_savings_total
-      name: Греющий кабель
-    - entity: sensor.attic_convector_savings_total
-      name: Конвектор мансарда
-    - entity: sensor.pc_savings_total
-      name: Компьютер
-  type: masonry
+  cards: []
+  type: sections
   show_icon_and_title: true
+  sections:
+  - type: grid
+    cards:
+    - type: heading
+      icon: mdi:currency-brl
+      heading: Затраты
+      heading_style: title
+    - type: markdown
+      content: "{% set devices = [('Бойлер', 'boiler'), ('Греющий кабель', 'heating_cable'),\n                  ('Конвектор мансарда', 'attic_convector'), ('Компьютер', 'pc'),\n                  ('Зарядка EV', 'ev_charging')] -%}\n{% set ns = namespace(now=0, prev=0) -%}\n## Затраты по месяцам\n\n###\
+        \ {{ states('sensor.house_cost_month') | float(0) | round(2) }} BYN с начала месяца\n\nПрошлый месяц по дому: **{{ states('sensor.house_cost_prev_month') | float(0) | round(2) }} BYN**.\n\n| Устройство | Текущий месяц, BYN | Прошлый месяц, BYN |\n|:--|--:|--:|\n{% for label, key in devices -%}\n\
+        {% set now = states('sensor.' ~ key ~ '_cost_month') | float(0) -%}\n{% set prev = states('sensor.' ~ key ~ '_cost_last_month') | float(states('input_number.' ~ key ~ '_cost_last_month') | float(0)) -%}\n{% set ns.now = ns.now + now -%}\n{% set ns.prev = ns.prev + prev -%}\n| {{ label }} | {{\
+        \ now | round(2) }} | {{ prev | round(2) }} |\n{% endfor -%}\n| **Итого по устройствам** | **{{ ns.now | round(2) }}** | **{{ ns.prev | round(2) }}** |\n"
+    - type: statistics-graph
+      title: Затраты по месяцам, BYN
+      chart_type: bar
+      period: month
+      days_to_show: 400
+      stat_types:
+      - change
+      entities:
+      - entity: sensor.boiler_cost_total
+        name: Бойлер
+      - entity: sensor.heating_cable_cost_total
+        name: Греющий кабель
+      - entity: sensor.attic_convector_cost_total
+        name: Конвектор мансарда
+      - entity: sensor.pc_cost_total
+        name: Компьютер
+    column_span: 2
+  - type: grid
+    cards:
+    - type: heading
+      icon: mdi:currency-brl
+      heading: Экономия
+      heading_style: title
+    - type: markdown
+      content: "{% set devices = [('Бойлер', 'boiler'), ('Греющий кабель', 'heating_cable'),\n                  ('Конвектор мансарда', 'attic_convector'), ('Компьютер', 'pc'),\n                  ('Зарядка EV', 'ev_charging')] -%}\n{% set ns = namespace(month=0, total=0) -%}\n## Экономия на тарифах\n\n\
+        Считается как мощность × (цена пика − действующая цена): в зоне T1 ноль,\nв T2 и T3 копится. Это «сколько не заплачено из-за того, что нагрузка\nработала не в пик», а не выписка из банка.\n\nДом целиком: **{{ states('sensor.house_savings_month') | float(0) | round(2) }} BYN**\nза текущий месяц,\
+        \ {{ states('sensor.house_savings_prev_month') | float(0) | round(2) }} BYN\nза прошлый, {{ states('sensor.house_savings_total') | float(0) | round(0) }} BYN\nза всю историю счётчика (оценка: при смене тарифов история пересчитывается\nпо новым ценам).\n\n| Прибор | За месяц, BYN | Всего, BYN |\n\
+        |:--|--:|--:|\n{% for label, key in devices -%}\n{% set month = states('sensor.' ~ key ~ '_saving_month') | float(0) -%}\n{% set total = states('sensor.' ~ key ~ '_savings_total') | float(0) -%}\n{% set ns.month = ns.month + month -%}\n{% set ns.total = ns.total + total -%}\n| {{ label }} | {{\
+        \ '%.2f' % month }} | {{ '%.2f' % total }} |\n{% endfor -%}\n| **Итого по устройствам** | **{{ '%.2f' % ns.month }}** | **{{ '%.2f' % ns.total }}** |\n\nХотите больше — включайте таймеры: блок «Что можно сэкономить» на вкладке\n«Энергия» показывает, сколько даст перенос каждой нагрузки в ночную\
+        \ зону.\n"
+    - type: statistics-graph
+      title: Экономия по месяцам, BYN
+      chart_type: bar
+      period: month
+      days_to_show: 400
+      stat_types:
+      - change
+      entities:
+      - entity: sensor.boiler_savings_total
+        name: Бойлер
+      - entity: sensor.heating_cable_savings_total
+        name: Греющий кабель
+      - entity: sensor.attic_convector_savings_total
+        name: Конвектор мансарда
+      - entity: sensor.pc_savings_total
+        name: Компьютер
+      grid_options:
+        rows: auto
+    column_span: 2
+  - type: grid
+    cards:
+    - type: heading
+      heading: Электросчётчики
+      heading_style: title
+      icon: mdi:meter-electric-outline
+    - type: vertical-stack
+      cards:
+      - type: markdown
+        content: '{% set t = [(''T1'', ''t1''), (''T2'', ''t2''), (''T3'', ''t3'')] -%}
+
+          {% set cur = ''sensor.energomera_ce301_active_energy_'' -%}
+
+          {% set beg = ''sensor.energomera_ce301_energy_at_month_start_'' -%}
+
+          {% set total = states(cur ~ ''total'') | float(0) - states(beg ~ ''total'') | float(0) -%}
+
+          {% set ns = namespace(cost=0) -%}
+
+          ## Счётчик на вводе:
+
+          ### текущий месяц потреблено {{ total | round(2) }} кВт·ч
+
+
+          Показание на 1-е число месяца: {{ states(beg ~ ''total'') | round(2) }} кВт·ч.
+
+
+          | Тариф | Расход, кВт·ч | Цена за кВт·ч | Стоимость |
+
+          |:--|--:|--:|--:|
+
+          {% for label, key in t -%}
+
+          {% set e = states(cur ~ key) | float(0) - states(beg ~ key) | float(0) -%}
+
+          {% set p = states(''input_number.tariff_'' ~ key) | float(0) -%}
+
+          {% set ns.cost = ns.cost + e * p -%}
+
+          | {{ label }} | {{ e | round(2) }} | {{ p }} | {{ (e * p) | round(2) }} |
+
+          {% endfor -%}
+
+          | **Итого** | **{{ total | round(2) }}** | | **{{ ns.cost | round(2) }}** |
+
+
+          {% set prev = ''sensor.energomera_ce301_energy_at_previous_month_start_'' -%}
+
+          {% set total = states(beg ~ ''total'') | float(0) - states(prev ~ ''total'') | float(0) -%}
+
+          {% set ns = namespace(cost=0) -%}
+
+          ### предыдущий месяц потреблено {{ total | round(2) }} кВт·ч
+
+
+          Показания счётчика на границах месяца:
+
+          {{ states(prev ~ ''total'') }} → {{ states(beg ~ ''total'') | round(2) }} кВт·ч.
+
+
+          | Тариф | Расход, кВт·ч | Цена за кВт·ч | Стоимость |
+
+          |:--|--:|--:|--:|
+
+          {% for label, key in t -%}
+
+          {% set e = states(beg ~ key) | float(0) - states(prev ~ key) | float(0) -%}
+
+          {% set p = states(''input_number.tariff_'' ~ key) | float(0) -%}
+
+          {% set ns.cost = ns.cost + e * p -%}
+
+          | {{ label }} | {{ e | round(2) }} | {{ p }} | {{ (e * p) | round(2) }} |
+
+          {% endfor -%}
+
+          | **Итого** | **{{ total | round(2) }}** | | **{{ ns.cost | round(2) }}** |'
+      - type: markdown
+        content: '{% set t = [(''T1'', ''t1''), (''T2'', ''t2''), (''T3'', ''t3'')] -%}
+
+          {% set beg = ''sensor.energomera_ce301_energy_at_month_start_'' -%}
+
+
+          '
+    - type: markdown
+      content: '## Счётчик на жилую часть дома
+
+
+        Месячные показания берутся из счётчика ветви, покрытие — из сенсоров ветвей.
+
+
+        | Показатель | Значение |
+
+        |---|---|
+
+        | Израсходовано за месяц | {{ states(''sensor.zhiloi_dom_schetchik_za_mesiats'') | round(2) }} кВт·ч |
+
+        | Покрыто розетками | {{ states(''sensor.vetv_zhiloi_dom_pokryto_rozetkami'') | round(2) }} кВт·ч |
+
+        | Без мониторинга | {{ states(''sensor.vetv_zhiloi_dom_prochie'') | round(2) }} кВт·ч |
+
+        '
+    - type: markdown
+      content: '## Gran-Electro СС301 (мастерская)
+
+
+        Показания счётчика ветви и покрытие розетками мастерской.
+
+
+        | Показатель | Значение |
+
+        |---|---|
+
+        | Израсходовано за месяц | {{ states(''sensor.masterskaia_schetchik_za_mesiats'') | round(2) }} кВт·ч |
+
+        | Покрыто розетками | {{ states(''sensor.vetv_masterskaia_pokryto_rozetkami'') | round(2) }} кВт·ч |
+
+        | Без мониторинга | {{ states(''sensor.vetv_masterskaia_prochie'') | round(2) }} кВт·ч |
+
+        '
+    - type: markdown
+      content: '## Счётчик на кухню (планируется)
+
+
+        Собственного счётчика пока нет — показано только то, что уже измеряется розетками.
+
+
+        | Показатель | Значение |
+
+        |---|---|
+
+        | Покрыто розетками | {{ states(''sensor.vetv_kukhnia_pokryto_rozetkami'') | round(2) }} кВт·ч |
+
+        '
+    column_span: 4
+  - type: grid
+    cards:
+    - type: statistics-graph
+      entities:
+      - entity: sensor.energomera_ce301_active_energy_t1
+        name: T1
+      - entity: sensor.energomera_ce301_active_energy_t2
+        name: T2
+      - entity: sensor.energomera_ce301_active_energy_t3
+        name: T3
+      title: Расход по суткам за текущий месяц
+      days_to_show: 31
+      period: day
+      chart_type: bar
+      stat_types:
+      - change
+      expand_legend: false
+      energy_date_selection: false
+      grid_options:
+        columns: 36
+        rows: auto
+    - color: none
+      type: entities
+      title: За месяц
+      entities:
+      - entity: sensor.house_cost_month
+        name: Дом целиком, за месяц
+      - type: divider
+      - entity: sensor.boiler_cost_month
+        name: Бойлер, за месяц
+      - entity: sensor.heating_cable_cost_month
+        name: Кабель, за месяц
+      - entity: sensor.attic_convector_cost_month
+        name: Конвектор, за месяц
+      - entity: sensor.pc_cost_month
+        name: Компьютер, за месяц
+    column_span: 4
+  - type: grid
+    cards:
+    - type: custom:sankey-chart
+      layout: horizontal
+      height: 500
+      unit_prefix: k
+      round: 2
+      convert_units_to: ''
+      co2_intensity_entity: sensor.co2_signal_co2_intensity
+      min_box_size: 3
+      min_box_distance: 5
+      min_state: 0
+      show_states: true
+      show_units: true
+      box_thickness: 15
+      connection_margin: 0
+      gas_co2_intensity: 2351.6459999999997
+      title: Поток энергии за месяц, кВт·ч
+      show_names: true
+      ignore_missing_entities: true
+      nodes:
+      - id: sensor.energomera_ce301_potreblenie_e_e_za_mesiats
+        name: Общий счётчик
+        section: 0
+        children_sum:
+          should_be: equal_or_less
+          reconcile_to: min
+      - id: sensor.vetv_zhiloi_dom_pokryto_rozetkami
+        name: 'Жилой дом: розетки'
+        section: 1
+      - id: sensor.vetv_masterskaia_pokryto_rozetkami
+        name: 'Мастерская: розетки'
+        section: 1
+      - id: sensor.vetv_kukhnia_pokryto_rozetkami
+        name: 'Кухня: розетки'
+        section: 1
+      - id: sensor.dom_prochie_ne_osnashcheno
+        name: Прочие (без мониторинга)
+        section: 1
+      - id: sensor.heating_cable_energy_month
+        name: Греющий кабель
+        section: 2
+      - id: sensor.pc_energy_month
+        name: Компьютер
+        section: 2
+      - id: sensor.attic_convector_energy_month
+        name: Конвектор мансарда
+        section: 2
+      - id: sensor.ev_charging_energy_month
+        name: Зарядка EV
+        section: 2
+      - id: sensor.boiler_energy_month
+        name: Бойлер
+        section: 2
+      links:
+      - source: sensor.energomera_ce301_potreblenie_e_e_za_mesiats
+        target: sensor.vetv_zhiloi_dom_pokryto_rozetkami
+      - source: sensor.energomera_ce301_potreblenie_e_e_za_mesiats
+        target: sensor.vetv_masterskaia_pokryto_rozetkami
+      - source: sensor.energomera_ce301_potreblenie_e_e_za_mesiats
+        target: sensor.vetv_kukhnia_pokryto_rozetkami
+      - source: sensor.energomera_ce301_potreblenie_e_e_za_mesiats
+        target: sensor.dom_prochie_ne_osnashcheno
+      - source: sensor.vetv_zhiloi_dom_pokryto_rozetkami
+        target: sensor.heating_cable_energy_month
+      - source: sensor.vetv_zhiloi_dom_pokryto_rozetkami
+        target: sensor.pc_energy_month
+      - source: sensor.vetv_masterskaia_pokryto_rozetkami
+        target: sensor.attic_convector_energy_month
+      - source: sensor.vetv_masterskaia_pokryto_rozetkami
+        target: sensor.ev_charging_energy_month
+      - source: sensor.vetv_kukhnia_pokryto_rozetkami
+        target: sensor.boiler_energy_month
+    column_span: 4
+  max_columns: 4
+  path: month
 - title: 'Энергия: расходы и экономия'
   path: energy
   icon: mdi:lightning-bolt
   cards:
+  - type: entities
+    title: Расход по розеткам
+    state_color: true
+    entities:
+    - entity: script.energy_plugs_refresh
+      name: Обновить список розеток
+    - type: button
+      name: Перезагрузить шаблоны
+      icon: mdi:reload
+      tap_action:
+        action: perform-action
+        perform_action: template.reload
+  - type: custom:auto-entities
+    card:
+      type: entities
+      title: 'Розетки: расход и стоимость за месяц'
+      state_color: true
+    filter:
+      include:
+      - entity_id: regex:.*_(cost|energy)_month$
+      exclude:
+      - entity_id: regex:^sensor\.(house|gran|obshchii|energomera)
+    sort:
+      method: state
+      numeric: true
+      reverse: true
   - type: markdown
     content: "{% set hour = now().hour -%}\n{% set t1 = states('input_number.tariff_t1') | float(0) -%}\n{% set t2 = states('input_number.tariff_t2') | float(0) -%}\n{% set t3 = states('input_number.tariff_t3') | float(0) -%}\n{% set free_day = is_state('binary_sensor.meter_free_day', 'on') -%}\n{% set\
       \ zone = 'T2' if free_day else ('T1' if hour >= 17 and hour < 23 else ('T2' if hour >= 23 or hour < 6 else 'T3')) -%}\n{% set left = namespace(h=0) -%}\n{% for i in range(1, 25) -%}\n  {% if left.h == 0 and (hour + i) % 24 in [6, 17, 23] -%}\n    {% set left.h = i -%}\n  {% endif -%}\n{% endfor\
